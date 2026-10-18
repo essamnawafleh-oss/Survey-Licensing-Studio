@@ -120,17 +120,46 @@ def run_calculation(inputs: CalculationInputs) -> dict[str, Any]:
     setback: SetbackResult | None = None
     rule = inputs.rule_obj
     out["rule"] = inputs.rule
+    out["rule_override"] = inputs.rule_override
     if rule is None:
         fail("setback", f"No rule is applied for land-use classification '{inputs.land_use_code}'.",
              "missing_rule")
     if not inputs.rule_version_verified and rule is not None:
         issues.append({"severity": "warning", "code": "rule_not_verified",
                        "message": "The applied rule version has not been verified by a reviewer.", "entity_id": ""})
+    override = inputs.rule_override or {}
+    distances: dict[str, float] = dict(rule.setbacks) if rule else {}
+    overridden = {k: float(v) for k, v in (override.get("setbacks") or {}).items() if k not in distances}
+    distances.update(overridden)
+    if rule is not None and overridden:
+        issues.append({"severity": "warning", "code": "setback_override",
+                       "message": "Setback values entered by reviewer {by} for conditional rule text: {vals}. "
+                                  "Note: {note}".format(by=override.get("entered_by", ""), note=override.get("note", ""),
+                                                        vals=", ".join(f"{k}={v:g} m (rule: '{rule.raw_setback(k)}')"
+                                                                       for k, v in overridden.items())),
+                       "entity_id": ""})
     if parcel is not None and rule is not None and inputs.parcel_verified:
-        try:
-            setback = compute_setbacks(parcel, inputs.edge_types, rule.setbacks, inputs.sliver_tolerance_m2)
-        except SlsError as exc:
-            fail("setback", exc)
+        needed = [t for t in dict.fromkeys(inputs.edge_types) if t]
+        unresolved = [t for t in needed if t not in distances]
+        if rule.status == "no_setbacks" and unresolved:
+            fail("setback", f"Classification {rule.code} ('{rule.name_ar}') defines no setback values in the rule "
+                            "table; setbacks cannot be calculated.", "missing_rule")
+        elif unresolved:
+            conditional = [t for t in unresolved if rule.raw_setback(t)]
+            undefined = [t for t in unresolved if not rule.raw_setback(t)]
+            if undefined:
+                fail("setback", "No setback value is defined in the rule table for boundary type(s): "
+                                + ", ".join(undefined) + ".", "missing_rule")
+            if conditional:
+                parts = ", ".join(f"{t}: '{rule.raw_setback(t)}'" for t in conditional)
+                fail("setback", f"The rule table value is not a plain number for {parts}. A reviewer must enter "
+                                "the applicable value for this case (Case → Conditional setback values).",
+                     "conditional_rule")
+        else:
+            try:
+                setback = compute_setbacks(parcel, inputs.edge_types, distances, inputs.sliver_tolerance_m2)
+            except SlsError as exc:
+                fail("setback", exc)
     if parcel is not None and inputs.roads and not inputs.edge_types:
         roads = []
         for r in inputs.roads:
@@ -149,9 +178,12 @@ def run_calculation(inputs: CalculationInputs) -> dict[str, Any]:
         }
         trace.add("setback", "Buildable area after setbacks",
                   "Buildable = Parcel − union over edges i of { p : dist(p, edge_i) < d_i }",
-                  {"distances_m": rule.setbacks if rule else {}, "edge_types": inputs.edge_types,
-                   "rule_code": rule.code if rule else ""}, setback.buildable_area, "m²",
-                  [f"rule version {inputs.rule_version_id}", f"rule row {rule.source_row}" if rule else ""],
+                  {"distances_m": distances, "edge_types": inputs.edge_types,
+                   "rule_code": rule.code if rule else "",
+                   "rule_text": dict(rule.setbacks_raw) if rule else {},
+                   "reviewer_values": overridden}, setback.buildable_area, "m²",
+                  [f"rule version {inputs.rule_version_id}", f"rule row {rule.source_row}" if rule else "",
+                   f"reviewer values by {override.get('entered_by')}: {override.get('note')}" if overridden else ""],
                   setback.warnings)
 
     # 4. Floor areas -------------------------------------------------------------------
@@ -267,7 +299,8 @@ def _eligibility(rule, parcel, plan, total_measured, floors, setback, plan_row, 
         checks.append({"key": "setbacks", "status": "fail" if v > 0.01 else "pass", "value": v, "limit": 0.0,
                        "unit": "m²", "excess": v})
     if rule.max_coverage_pct is None:
-        not_evaluated("coverage", "Maximum coverage is not defined in the applied rule.")
+        not_evaluated("coverage", f"Rule text '{rule.coverage_raw}' is not a plain percentage." if rule.coverage_raw
+                      else "Maximum coverage is not defined in the applied rule.")
     else:
         allowed = parcel.area * rule.max_coverage_pct / 100.0
         cov = plan.area
@@ -279,14 +312,16 @@ def _eligibility(rule, parcel, plan, total_measured, floors, setback, plan_row, 
                   {"plan_m2": cov, "parcel_m2": parcel.area, "max_pct": rule.max_coverage_pct},
                   100.0 * cov / parcel.area, "%", warnings=["Plan projection of all floors is used as coverage."])
     if rule.max_floors is None:
-        not_evaluated("floors", "Maximum number of floors is not defined in the applied rule.")
+        not_evaluated("floors", f"Rule text '{rule.floors_raw}' is not a plain number of floors." if rule.floors_raw
+                      else "Maximum number of floors is not defined in the applied rule.")
     else:
         n = len(floors)
         checks.append({"key": "floors", "status": "fail" if n > rule.max_floors else "pass", "value": n,
                        "limit": rule.max_floors, "unit": "floors", "excess": max(0, n - rule.max_floors),
                        "assumption": "Every distinct floor key in the drawing is counted (review basements/roofs)."})
     if rule.max_far is None:
-        not_evaluated("far", "Maximum floor-area ratio is not defined in the applied rule.")
+        not_evaluated("far", f"Rule text '{rule.far_raw}' is not a plain number." if rule.far_raw
+                      else "Maximum floor-area ratio is not defined in the applied rule.")
     else:
         allowed = parcel.area * rule.max_far
         checks.append({"key": "far", "status": "fail" if total_measured > allowed + 0.01 else "pass",

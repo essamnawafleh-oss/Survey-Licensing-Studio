@@ -49,6 +49,8 @@ class CalculationInputs:
     drawing_content_sha256: str
     sliver_tolerance_m2: float = 0.01
     extraction_issues: list[dict[str, str]] = field(default_factory=list)
+    # Reviewer-entered values for boundary types whose rule text is conditional (see rules_repo).
+    rule_override: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -100,8 +102,8 @@ def extract_inputs(drawing: Drawing, *, boundary_entity_id: str, parcel_verified
                    edge_types: list[str], rule: LandUseRule | None, rule_version_id: str | None,
                    rule_version_verified: bool, land_use_code: str, licenses: list[LicenseRecordInput],
                    units: DrawingUnits, floor_order: list[str] | None = None,
-                   drawing_revision_id: str | None = None, sliver_tolerance_m2: float = 0.01
-                   ) -> CalculationInputs:
+                   drawing_revision_id: str | None = None, sliver_tolerance_m2: float = 0.01,
+                   rule_override: dict[str, Any] | None = None) -> CalculationInputs:
     issues: list[dict[str, str]] = []
     parcel: ShapeInput | None = None
     if boundary_entity_id:
@@ -152,5 +154,5 @@ def extract_inputs(drawing: Drawing, *, boundary_entity_id: str, parcel_verified
         footprints=footprints, linear=linear, roads=roads, floor_order=list(floor_order or []),
         licenses=[lic.to_dict() for lic in licenses], drawing_revision_id=drawing_revision_id,
         drawing_content_sha256=drawing.source_content_hash(), sliver_tolerance_m2=sliver_tolerance_m2,
-        extraction_issues=issues,
+        extraction_issues=issues, rule_override=rule_override,
     )

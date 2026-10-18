@@ -9,7 +9,8 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QFileDialog, QFormLayout, QGr
 
 from ...core.i18n import current_language, tr
 from ...persistence.workspace import Workspace
-from ...rules.excel_rules import OPTIONAL_FIELDS, REQUIRED_FIELDS, ColumnMapping, list_sheets, read_sheet, validate
+from ...rules.excel_rules import (OPTIONAL_FIELDS, REQUIRED_FIELDS, ColumnMapping, list_sheets, read_sheet,
+                                  suggest_mapping, validate)
 from .common import fill_table, make_table, show_error
 
 
@@ -77,8 +78,8 @@ class RulesDialog(QDialog):
         vl.addWidget(self.errors)
         self.valid_lbl = QLabel()
         vl.addWidget(self.valid_lbl)
-        self.parsed = make_table([tr("rules.field.code"), tr("rpt.setback_m"), tr("check.coverage"),
-                                  tr("check.floors"), tr("check.far"), tr("rpt.source_row")])
+        self.parsed = make_table([tr("rules.field.code"), tr("rules.status"), tr("rules.setback_text"),
+                                  tr("check.coverage"), tr("check.floors"), tr("rpt.source_row")])
         vl.addWidget(self.parsed)
         mid.addWidget(vg, 1)
         lay.addLayout(mid, 1)
@@ -100,7 +101,7 @@ class RulesDialog(QDialog):
         return w
 
     def _browse(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, tr("rules.browse"), "", "Excel (*.xlsx *.xlsm)")
+        path, _ = QFileDialog.getOpenFileName(self, tr("rules.browse"), "", "Excel (*.xlsx *.xlsm *.xls)")
         if not path:
             return
         try:
@@ -134,6 +135,7 @@ class RulesDialog(QDialog):
         self.preview_table.setColumnCount(len(headers))
         self.preview_table.setHorizontalHeaderLabels(headers)
         fill_table(self.preview_table, [[c.value for c in r] for r in self.preview.rows[:50]])
+        suggested = suggest_mapping(headers).columns
         for fld, cb in self.map_boxes.items():
             prev = cb.currentText()
             cb.clear()
@@ -141,7 +143,8 @@ class RulesDialog(QDialog):
             for h in headers:
                 if h:
                     cb.addItem(h, h)
-            cb.setCurrentText(prev if prev in headers else "")
+            # Keep the user's choice; otherwise pre-fill a suggestion from recognised header names.
+            cb.setCurrentText(prev if prev in headers else suggested.get(fld, ""))
         self.valid_lbl.setText(tr("rules.rows_loaded", n=len(self.preview.rows)))
         self.valid_lbl.setObjectName("muted")
 
@@ -162,13 +165,18 @@ class RulesDialog(QDialog):
         self.validation = validate(self.preview, self._mapping())
         for e in self.validation.errors:
             self.errors.addItem(tr("rules.row_error", row=e.row, col=e.column, msg=e.message))
+        for w in self.validation.warnings:
+            self.errors.addItem("⚠ " + tr("rules.row_error", row=w.row, col=w.column, msg=w.message))
         lang = current_language()
-        fill_table(self.parsed, [[r.label(lang), ", ".join(f"{k}={v:g}" for k, v in r.setbacks.items()),
-                                  r.max_coverage_pct, r.max_floors, r.max_far, r.source_row]
+        fill_table(self.parsed, [[r.label(lang), tr(f"rules.st.{r.status}"),
+                                  " | ".join(f"{k}: {r.setbacks_raw.get(k) or '—'}" for k in r.setbacks_raw),
+                                  r.coverage_raw, r.floors_raw, r.source_row]
                                  for r in self.validation.rules])
         if self.validation.ok:
-            self.valid_lbl.setText(tr("rules.valid", n=len(self.validation.rules),
-                                      blank=self.validation.skipped_blank_rows))
+            v = self.validation
+            self.valid_lbl.setText(tr("rules.valid_counts", n=len(v.rules), num=v.count("numeric"),
+                                      cond=v.count("conditional"), none=v.count("no_setbacks"),
+                                      blank=v.skipped_blank_rows))
             self.valid_lbl.setObjectName("ok")
             self.import_btn.setEnabled(self.ws.user.can("import_rules"))
         else:
@@ -203,9 +211,9 @@ class RulesDialog(QDialog):
         self.version_info = QLabel()
         self.version_info.setWordWrap(True)
         right.addWidget(self.version_info)
-        self.version_rules = make_table([tr("rules.field.code"), tr("rules.field.name_ar"), tr("rules.field.name_en"),
-                                         tr("rpt.setback_m"), tr("check.coverage"), tr("check.floors"),
-                                         tr("check.far"), tr("rpt.source_row")])
+        self.version_rules = make_table([tr("rules.field.code"), tr("rules.field.name_ar"), tr("rules.status"),
+                                         tr("rules.setback_text"), tr("check.coverage"), tr("check.floors"),
+                                         tr("rules.field.notes"), tr("rpt.source_row")])
         right.addWidget(self.version_rules)
         lay.addLayout(right, 3)
         self._load_versions()
@@ -227,9 +235,11 @@ class RulesDialog(QDialog):
                                      by=v.imported_by, at=v.imported_at,
                                      verified=(tr("rules.verified_by", user=v.verified_by, at=v.verified_at)
                                                if v.verified else tr("rules.unverified"))))
-        fill_table(self.version_rules, [[r.code, r.name_ar, r.name_en,
-                                         ", ".join(f"{k}={val:g}" for k, val in r.setbacks.items()),
-                                         r.max_coverage_pct, r.max_floors, r.max_far, r.source_row]
+        fill_table(self.version_rules, [[r.code, r.name_ar, tr(f"rules.st.{r.status}"),
+                                         " | ".join(f"{k}: {r.setbacks_raw.get(k) or '—'}" for k in r.setbacks_raw)
+                                         or ", ".join(f"{k}={val:g}" for k, val in r.setbacks.items()),
+                                         r.coverage_raw or r.max_coverage_pct, r.floors_raw or r.max_floors, r.notes,
+                                         r.source_row]
                                         for r in self.ws.rules.rules(v.id)])
         self.verify_btn.setEnabled(not v.verified and self.ws.user.can("verify_rules"))
 

@@ -56,7 +56,7 @@ def test_workflow_via_dialogs(qtbot, workspace, sample_dxf, sample_xlsx):
     cd.units_verified.setChecked(True)
     cd.version.setCurrentIndex(cd.version.findData(version.id))
     cd.land_use.setCurrentIndex(cd.land_use.findData("SYN-A"))
-    assert "5 m" in cd.rule_info.text()
+    assert "Front: 5" in cd.rule_info.text()
     cd.accept()
     case = ws.cases.get(cd.case.id)
     assert case.units.verified and case.units.unit is LengthUnit.METER and case.units.verified_by == ADMIN.username

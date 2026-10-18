@@ -92,3 +92,20 @@ Each decision records context, the choice, and its consequences. Add new entries
 
 ## TD-19 Packaging
 - PyInstaller one-folder build using `packaging/launcher.py`. The package's `__main__.py` cannot be the frozen entry script because of its relative imports, which the Linux test build revealed. QtWebEngine is excluded to keep the build small; QtPdf is kept for the report preview.
+
+## TD-20 Real rule tables: raw text, conditional values, reviewer values (supersedes the strict part of TD-09)
+- **Context:** the authority's land-use table (`ZONING_DESC_NEW`, exported from the GIS geodatabase as legacy `.xls`) has 133 classifications. Setbacks are stored as text, and about a quarter are conditional: "صفر - 2", "4م بعد 14م", "حسب المخطط", "صفر لطابقين و2م للبقية". Coverage values include "39%", "%15", "ضمن الارتدادات" and "30%بحد اقصى 100م2". Some classifications, such as archaeology zones and parks, define no values at all.
+- Blocking the whole table, as TD-09 did, made the real table unusable. Guessing a number for conditional text would invent regulation.
+- **Choice:**
+  - Legacy `.xls` is read with `xlrd` 2.0.1 (read-only, offline).
+  - Every value keeps its exact source text, and the whole source row is stored verbatim.
+  - A number is stored only for unambiguous forms: plain numbers, Arabic-Indic digits, "صفر" (= 0), "4م", "39%" / "%15", or numeric cells with a % format. A number between 0 and 1 without a % format is treated as ambiguous.
+  - Each row gets a status: `numeric`, `conditional` or `no_setbacks`. Only structural problems block the import: missing or duplicate codes, negative values, unmapped columns.
+  - Any zero coverage or zero floor count is flagged for the reviewer, because it could mean "not permitted" or "not specified".
+- **Calculation:** if an edge needs a boundary type whose rule text is conditional, the setback section stops with error `conditional_rule` and quotes the text. A reviewer (reviewer or admin role) can record the applicable values **for one case**, with a mandatory justification, in `case_setback_overrides`.
+  - These reviewer values are tied to the exact rule version and code, so a new rule version does not inherit them.
+  - They can never replace a numeric value from the rule table.
+  - They are audited, included in the calculation inputs and hash, and shown in the trace, the issues list and the report (source text, applied value and basis per boundary type).
+- Coverage, floor and FAR checks with non-plain text are `not_evaluated`, and the source text is given as the reason.
+- The column mapping is pre-filled from recognised header names, such as `ZONE_ID`, `SETBACK_FRONT` and `BUILT_UP_AREA_PERCENT`, but this is only a suggestion that the user confirms.
+- **Data handling:** the official table is not committed to the repository. Tests use synthetic tables with the same kinds of values.

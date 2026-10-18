@@ -147,6 +147,8 @@ class CaseService:
             licenses=self.ws.licenses.inputs(case_id), units=case.units,
             floor_order=floor_order or self.floor_order(loaded.drawing),
             drawing_revision_id=loaded.revision.id, sliver_tolerance_m2=self.ws.settings.sliver_area_tolerance_m2,
+            rule_override=(ov.to_dict() if (ov := self.ws.rules.case_override(case_id, version_id, case.land_use_code))
+                           else None),
         )
         if parcel.verified and not verified:
             inputs.extraction_issues.append({

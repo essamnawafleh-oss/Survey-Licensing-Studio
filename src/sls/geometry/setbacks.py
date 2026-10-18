@@ -123,7 +123,7 @@ def compute_setbacks(parcel: Polygon, edge_types: Sequence[str], distances: Mapp
                         "(slivers); they are kept and must be reviewed.")
     if any(e.distance_m == 0 for e in edges):
         zero = [str(e.index + 1) for e in edges if e.distance_m == 0]
-        warnings.append("Rule value is 0 m for edge(s) " + ", ".join(zero) + ".")
+        warnings.append("Setback is 0 m for edge(s) " + ", ".join(zero) + ".")
     return SetbackResult(status, parcel, buildable, setback_zone, edges, part_areas, warnings)
 
 

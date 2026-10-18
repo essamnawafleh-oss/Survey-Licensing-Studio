@@ -13,7 +13,7 @@ a = Analysis(
         (str(SRC / "sls" / "resources" / "fonts"), "sls/resources/fonts"),
         (str(SRC / "sls" / "resources" / "i18n"), "sls/resources/i18n"),
     ],
-    hiddenimports=["PySide6.QtPdf", "PySide6.QtPdfWidgets", "bidi.algorithm"],
+    hiddenimports=["PySide6.QtPdf", "PySide6.QtPdfWidgets", "bidi.algorithm", "xlrd"],
     excludes=["PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.Qt3DCore", "tkinter"],
     noarchive=False,
 )

@@ -151,16 +151,24 @@ class CaseDialog(QDialog):
             self.rule_info.setText(str(exc))
             self.rule_info.setObjectName("error")
             return
-        parts = [f"{tr('btype.' + k) if k in ('front', 'side', 'rear') else k}: {v:g} m" for k, v in r.setbacks.items()]
+        def bt(k: str) -> str:
+            return tr("btype." + k) if k in ("front", "side", "rear") else k
+
+        raw = r.setbacks_raw or {k: f"{v:g}" for k, v in r.setbacks.items()}
+        parts = [f"{bt(k)}: {v or '—'}" for k, v in raw.items()]
         extra = []
-        if r.max_coverage_pct is not None:
-            extra.append(f"{tr('check.coverage')}: {r.max_coverage_pct:g}%")
-        if r.max_floors is not None:
-            extra.append(f"{tr('check.floors')}: {r.max_floors}")
-        if r.max_far is not None:
-            extra.append(f"{tr('check.far')}: {r.max_far:g}")
-        self.rule_info.setText(" · ".join(parts + extra) + f"  ({tr('rpt.source_row')} {r.source_row})")
-        self.rule_info.setObjectName("ok")
+        if r.coverage_raw or r.max_coverage_pct is not None:
+            extra.append(f"{tr('check.coverage')}: {r.coverage_raw or f'{r.max_coverage_pct:g}%'}")
+        if r.floors_raw or r.max_floors is not None:
+            extra.append(f"{tr('check.floors')}: {r.floors_raw or r.max_floors}")
+        text = " · ".join(parts + extra) + f"  ({tr('rpt.source_row')} {r.source_row})"
+        if r.notes:
+            text += f"\n{r.notes}"
+        if r.status != "numeric":
+            text += "\n" + tr(f"rules.st_hint.{r.status}")
+        self.rule_info.setText(text)
+        self.rule_info.setObjectName("ok" if r.status == "numeric" else "warning")
+        self.rule_info.style().polish(self.rule_info)
 
     def accept(self) -> None:
         if self.survey_date.text().strip() and not _DATE.match(self.survey_date.text().strip()):

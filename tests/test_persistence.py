@@ -194,3 +194,90 @@ def test_users_and_passwords(workspace):
     with pytest.raises(ValidationError):
         workspace.users.create("x", "short", "reviewer")
     assert u.can("approve_report") and not replace(u, role="surveyor").can("approve_report")
+
+
+def test_conditional_rule_needs_reviewer_values(workspace, sample_dxf, tmp_path):
+    """Conditional rule text stops the setback calculation until a reviewer enters values for the case."""
+    from openpyxl import Workbook
+
+    from sls.rules.excel_rules import suggest_mapping
+
+    wb = Workbook()
+    ws_ = wb.active
+    ws_.append(["ZONE_ID", "NAME", "SETBACK_FRONT", "SETBACK_SIDE", "SETBACK_BACK", "BUILT_UP_AREA_PERCENT", "FLOOR_NO"])
+    ws_.append([7, "تجاري تجريبي", "4", "4م بعد 14م", "4", "ضمن الارتدادات", "*طابقين+روف"])
+    ws_.append([9, "حدائق تجريبية", None, None, None, None, None])
+    path = tmp_path / "zones.xlsx"
+    wb.save(path)
+    from sls.rules.excel_rules import read_sheet
+
+    mapping = suggest_mapping(read_sheet(path, "Sheet", 1).headers)
+    v = workspace.rules.import_version(REVIEWER, "Zones", path, "Sheet", 1, mapping)
+    workspace.rules.verify_version(REVIEWER, v.id)
+    rule = workspace.rules.rule(v.id, "7")
+    assert rule.status == "conditional" and rule.setbacks_raw["side"] == "4م بعد 14م" and rule.source["NAME"]
+
+    svc = CaseService(workspace)
+    case = make_case(workspace, units=DrawingUnits(LengthUnit.METER, True, "local", CrsKind.LOCAL, "admin"),
+                     rule_version_id=v.id, land_use_code="7")
+    loaded = svc.import_drawing(case.id, sample_dxf)
+    boundary = assign_sample_roles(loaded.drawing)
+    workspace.drawings.save_revision(ADMIN, loaded.record.id, loaded.drawing)
+    parcel = workspace.drawings.parcel(case.id)
+    parcel.boundary_entity_id = boundary
+    parcel.boundary_points = [[p[0], p[1]] for p in loaded.drawing.entities[boundary].data["points"]]
+    parcel.edge_types = SAMPLE_EDGE_TYPES
+    workspace.drawings.save_parcel(ADMIN, parcel, verify=True)
+
+    calc = svc.run_calculation(case.id)
+    err = next(e for e in calc.results["errors"] if e["section"] == "setback")
+    assert err["code"] == "conditional_rule" and "4م بعد 14م" in err["message"]
+    checks = {c["key"]: c for c in calc.results["eligibility"]["checks"]}
+    assert checks["coverage"]["status"] == "not_evaluated" and "ضمن الارتدادات" in checks["coverage"]["reason"]
+    assert "*طابقين+روف" in checks["floors"]["reason"]
+
+    with pytest.raises(PermissionDeniedError):
+        workspace.rules.set_case_override(SURVEYOR, case.id, v.id, "7", {"side": 4.0}, "after 14 m depth")
+    with pytest.raises(ValidationError):
+        workspace.rules.set_case_override(REVIEWER, case.id, v.id, "7", {"side": 4.0}, "  ")
+    with pytest.raises(ValidationError):  # numeric rule values can never be replaced
+        workspace.rules.set_case_override(REVIEWER, case.id, v.id, "7", {"front": 1.0}, "x")
+    workspace.rules.set_case_override(REVIEWER, case.id, v.id, "7", {"side": 4.0}, "Parcel depth < 14 m: 4 m applies")
+    calc2 = svc.run_calculation(case.id)
+    assert "setback" in calc2.results, calc2.results["errors"]
+    assert calc2.results["setback"]["edges"][1]["setback_m"] == 4.0
+    assert any(i["code"] == "setback_override" for i in calc2.results["issues"])
+    step = next(s for s in calc2.results["trace"] if s["key"] == "setback")
+    assert step["inputs"]["reviewer_values"] == {"side": 4.0} and step["inputs"]["rule_text"]["side"] == "4م بعد 14م"
+    assert workspace.calculations.reproduce(calc2.id)[0]
+
+    # The override is tied to the rule version and code: a new version does not inherit it.
+    v2 = workspace.rules.import_version(REVIEWER, "Zones", path, "Sheet", 1, mapping)
+    case = workspace.cases.get(case.id)
+    case.rule_version_id = v2.id
+    workspace.cases.save(ADMIN, case)
+    calc3 = svc.run_calculation(case.id)
+    assert any(e["code"] == "conditional_rule" for e in calc3.results["errors"])
+
+    case.land_use_code = "9"
+    workspace.cases.save(ADMIN, case)
+    calc4 = svc.run_calculation(case.id)
+    assert any("defines no setback values" in e["message"] for e in calc4.results["errors"])
+
+
+def test_existing_v1_database_is_migrated_with_backup(tmp_path, monkeypatch):
+    from sls.persistence import db as db_module
+    from sls.persistence.schema import MIGRATIONS
+
+    path = tmp_path / "d" / "sls.sqlite3"
+    monkeypatch.setattr(db_module, "MIGRATIONS", MIGRATIONS[:1])
+    old = db_module.Database(path, backup_dir=tmp_path / "d" / "backups")
+    old.migrate()
+    old.execute("INSERT INTO rule_sets(id,name,created_at) VALUES ('rs','old','2026-01-01')")
+    old.close()
+    monkeypatch.setattr(db_module, "MIGRATIONS", MIGRATIONS)
+    ws = Workspace(Settings(data_dir=str(tmp_path / "d")), user=ADMIN, auto_backup=False)
+    assert ws.db.schema_version() == MIGRATIONS[-1][0]
+    assert any("pre-migration-v1" in p.name for p in list_backups(ws.backup_dir))
+    assert ws.db.query_one("SELECT name FROM rule_sets")["name"] == "old"
+    ws.close()

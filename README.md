@@ -57,24 +57,37 @@ modified, and stored files are never overwritten.
 3. **Verify units and coordinate system:** *Case → Case details & units*. No area or
    setback is calculated until a user verifies them. Geographic (lat/long) coordinates are
    refused for metric area.
-4. **Import the rule table:** *Case → Setback rule tables*. Choose the workbook, sheet and
-   header row, map the columns, then **Validate**. Errors block the import. Each import is
-   an immutable version that a reviewer must **verify**. Select the version and land-use
-   classification in *Case details*.
-5. **Property boundary:** select the closed parcel polyline, then open *Case → Property
+4. **Import the rule table:** *Case → Setback rule tables*. Choose the workbook (`.xlsx`, or
+   legacy `.xls` such as the GIS export `ZONING_DESC_NEW`), the sheet and the header row.
+   The column mapping is pre-filled from recognised headers (`ZONE_ID`, `NAME`,
+   `SETBACK_FRONT/SIDE/BACK`, `BUILT_UP_AREA_PERCENT`, `FLOOR_NO`, `REMARK`); check it, then
+   **Validate**.
+   - Every value is kept exactly as written. A number is stored only when the text is
+     unambiguous (`5`, `2.5`, `صفر`, `4م`, `39%`).
+   - Each classification is marked *numeric*, *conditional* (e.g. `4م بعد 14م`,
+     `صفر - 2`, `حسب المخطط`) or *no setbacks*.
+   - Only structural errors block the import: missing or duplicate codes, negative values.
+   - Each import is an immutable version that a reviewer must **verify**. Select the version
+     and land-use classification in *Case details*.
+5. **Conditional setback values:** for a conditional classification, the calculation stops
+   and quotes the rule text. A reviewer opens *Case → Conditional setback values*, enters the
+   value that applies to this parcel and writes a justification (required). Values from the
+   rule table cannot be changed this way. The entry is audited, applies only to this case
+   and rule version, and appears in the calculation trace and the report.
+6. **Property boundary:** select the closed parcel polyline, then open *Case → Property
    boundary & edges*. Classify every edge (front, side, rear or a custom type from the rule
    table) and **Verify**. If the boundary changes later, the verification is invalidated.
-6. **Previous licenses:** *Case → Previous licenses*. Enter licensed areas per floor,
+7. **Previous licenses:** *Case → Previous licenses*. Enter licensed areas per floor,
    wall/fence lengths, approved violations and fees, and attach documents. A reviewer marks
    each record verified or disputed. Editing a verified record resets it to unverified.
-7. **Calculate:** *Case → Calculate*. The results keep five categories apart: measured,
+8. **Calculate:** *Case → Calculate*. The results keep five categories apart: measured,
    previously licensed, remaining to assess, setback violation, and legally eligible (never
    decided by the software). The results also show eligibility checks, issues and a full
    trace (inputs, formula, unit, sources). *Add generated setback geometry* draws the
    buildable limit and violation areas on separate derived layers.
-8. **Photos, attachments, notes:** *Case → Photos, attachments & notes*. Notes appear in the
+9. **Photos, attachments, notes:** *Case → Photos, attachments & notes*. Notes appear in the
    report and never change any calculated value.
-9. **Report:** *Case → PDF report*. Set the options, **Preview**, then **Export revision**
+10. **Report:** *Case → PDF report*. Set the options, **Preview**, then **Export revision**
    as draft, reviewed or approved. Approval is blocked until the calculation is current and
    complete, units and rules are verified, and no license is unverified. Every export is kept
    with its JSON manifest.

@@ -289,6 +289,29 @@ CREATE TABLE report_exports (
 );
 """,
     ),
+    (
+        2,
+        "rule raw values and per-case reviewer setback values",
+        """
+ALTER TABLE land_use_rules ADD COLUMN status TEXT NOT NULL DEFAULT 'numeric';
+ALTER TABLE land_use_rules ADD COLUMN raw_json TEXT NOT NULL DEFAULT '{}';
+
+-- Values entered by an authorised reviewer for one case when the rule table text is
+-- conditional (e.g. "4م بعد 14م"). Valid only for the exact rule version and code.
+CREATE TABLE case_setback_overrides (
+    id TEXT PRIMARY KEY,
+    case_id TEXT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+    rule_version_id TEXT NOT NULL REFERENCES rule_set_versions(id),
+    land_use_code TEXT NOT NULL,
+    setbacks_json TEXT NOT NULL,
+    note TEXT NOT NULL,
+    entered_by TEXT NOT NULL,
+    entered_at TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX ix_overrides_case ON case_setback_overrides(case_id);
+""",
+    ),
 ]
 
 # Default configurable case fields, inserted once by migration seeding (editable later).

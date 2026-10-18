@@ -42,12 +42,14 @@ def used_keys() -> set[str]:
     keys |= {f"lic_issue.{k}" for k in ("no_date", "no_quantities", "no_document", "duplicate_floor")}
     keys |= {f"lic.{k}" for k in ("attach", "open", "doc_options", "ocr")}
     keys |= {f"kind.{k}" for k in ("wall", "fence")}
+    keys |= {f"rules.st.{k}" for k in ("numeric", "conditional", "no_setbacks")}
+    keys |= {f"rules.st_hint.{k}" for k in ("conditional", "no_setbacks")}
     keys |= {f"act.{a}" for a in ("new_case", "open_case", "save", "import_drawing", "new_drawing", "export_dxf",
                                   "demo_case", "backup", "restore", "settings", "users", "exit", "undo", "redo",
                                   "erase", "select_all", "zoom_extents", "grid", "osnap", "grid_snap", "ortho",
                                   "lineweights", "case_details", "rules", "boundary", "calculate", "results",
                                   "licenses", "media", "report", "regulatory_check", "regulatory_transform",
-                                  "case_fields", "limitations", "about")}
+                                  "case_fields", "setback_override", "limitations", "about")}
     return keys
 
 

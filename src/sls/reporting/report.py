@@ -362,12 +362,39 @@ def _body(data: ReportData, opts: ReportOptions, nf: NumberFormat, manifest_entr
             story.append(Spacer(1, 3 * mm))
         rule = results.get("rule")
         if rule:
-            rows = [[ctx.btype(k), ctx.length(v), str(rule.get("source_row", ""))]
-                    for k, v in sorted(rule["setbacks"].items())]
-            story.append(ctx.p(f"{ctx.t('rpt.applied_rule')}: {rule['code']} — "
-                               f"{rule.get('name_ar') if ctx.rtl else rule.get('name_en')}", 9.5, bold=True))
-            story.append(ctx.table([ctx.t("rpt.boundary_type"), ctx.t("rpt.setback_m"), ctx.t("rpt.source_row")],
-                                   rows, [tw * 0.4, tw * 0.3, tw * 0.3]))
+            override = (results.get("rule_override") or {}).get("setbacks") or {}
+            raw = rule.get("setbacks_raw") or {k: f"{v:g}" for k, v in rule["setbacks"].items()}
+            rows = []
+            for k in raw:
+                if k in rule["setbacks"]:
+                    applied, basis = ctx.length(rule["setbacks"][k]), ctx.t("rpt.basis_rule")
+                elif k in override:
+                    applied, basis = ctx.length(override[k]), ctx.t("rpt.basis_reviewer")
+                else:
+                    applied, basis = "—", ctx.t("rpt.basis_none")
+                rows.append([ctx.btype(k), raw[k] or "—", applied, basis])
+            name = rule.get("name_ar") if ctx.rtl else (rule.get("name_en") or rule.get("name_ar"))
+            story.append(ctx.p(f"{ctx.t('rpt.applied_rule')}: {rule['code']} — {name}  "
+                               f"({ctx.t('rpt.source_row')} {rule.get('source_row', '')})", 9.5, bold=True))
+            story.append(ctx.table([ctx.t("rpt.boundary_type"), ctx.t("rpt.rule_text"), ctx.t("rpt.setback_m"),
+                                    ctx.t("rpt.basis")], rows, [tw * 0.2, tw * 0.35, tw * 0.15, tw * 0.3]))
+            extra = []
+            if rule.get("coverage_raw"):
+                extra.append((ctx.t("check.coverage"), rule["coverage_raw"]))
+            if rule.get("floors_raw"):
+                extra.append((ctx.t("check.floors"), rule["floors_raw"]))
+            if rule.get("notes"):
+                extra.append((ctx.t("rules.field.notes"), rule["notes"]))
+            for key, value in (rule.get("source") or {}).items():
+                if key.upper().startswith("REMARK_") and value:
+                    extra.append((key, value))
+            if override:
+                ov = results.get("rule_override") or {}
+                extra.append((ctx.t("rpt.reviewer_values"),
+                              f"{ov.get('note', '')} — {ov.get('entered_by', '')} {ov.get('entered_at', '')}"))
+            if extra:
+                story.append(Spacer(1, 2 * mm))
+                story.append(ctx.kv(extra, tw))
             story.append(Spacer(1, 3 * mm))
         parcel = results.get("parcel")
         sb = results.get("setback")

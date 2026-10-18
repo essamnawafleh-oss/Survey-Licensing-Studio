@@ -139,8 +139,8 @@ class MainWindow(QMainWindow):
 
         m_case = mb.addMenu(tr("menu.case"))
         for key, slot in (("act.case_details", self.edit_case), ("act.rules", self.open_rules),
-                          ("act.boundary", self.open_boundary), ("act.calculate", self.calculate),
-                          ("act.results", self.show_results), ("act.licenses", self.open_licenses),
+                          ("act.boundary", self.open_boundary), ("act.setback_override", self.open_override),
+                          ("act.calculate", self.calculate), ("act.results", self.show_results), ("act.licenses", self.open_licenses),
                           ("act.media", self.open_media), ("act.report", self.open_report),
                           ("act.regulatory_check", self.regulatory_check),
                           ("act.regulatory_transform", self.regulatory_transform)):
@@ -532,6 +532,12 @@ class MainWindow(QMainWindow):
                              suggestions, self.canvas, self)
         dlg.setModal(False)
         dlg.exec()
+        self._refresh_case_summary()
+
+    def open_override(self) -> None:
+        from .dialogs.override_dialog import OverrideDialog
+
+        OverrideDialog(self.ws, self.case_id, self).exec()
         self._refresh_case_summary()
 
     def calculate(self) -> None:

@@ -72,7 +72,7 @@ at the end of this file.
 6. **Data integrity.** Original files are never overwritten (content-hashed copies).
    Calculations are pinned to a rule version and to license record revisions.
 
-## Feature status (2026-10-18, 108 automated tests passing, 2 DWG tests skipped)
+## Feature status (2026-10-18, 113 automated tests passing, 2 DWG tests skipped)
 
 | Area | Feature | Status | Evidence / notes |
 |------|---------|--------|------------------|
@@ -92,7 +92,8 @@ at the end of this file.
 | M2 | Command line with aliases and coordinate input | ✅ | |
 | M2 | Properties inspector (editable layer, coords, text, radius, floor, notes) | ✅ | |
 | M3 | Boundary validation (closure, validity, degenerate, zero-area) | ✅ | `tests/test_geometry.py` |
-| M3 | Excel rule import: sheet/header/mapping/validation/preview/immutable versions/verification | ✅ | `tests/test_rules_excel.py` |
+| M3 | Excel rule import (.xlsx and legacy .xls): sheet/header/suggested mapping/validation/preview/immutable versions/verification | ✅ | `tests/test_rules_excel.py`; real authority table (133 classes) imported locally: 82 numeric, 35 conditional, 16 without setbacks |
+| M3 | Conditional rule text kept verbatim; per-case reviewer values with justification (TD-20) | ✅ | `test_conditional_rule_needs_reviewer_values` |
 | M3 | Per-edge setback geometry (non-convex, narrow, empty, slivers, missing rule stops) | ✅ | TD-06 |
 | M3 | Floor areas (union, overlap/duplicate detection), setback intersections, outside-parcel | ✅ | |
 | M3 | Wall/fence lengths (overlap counted once) | ✅ | |
