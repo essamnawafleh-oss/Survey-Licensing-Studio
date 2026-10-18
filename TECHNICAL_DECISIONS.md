@@ -189,3 +189,34 @@ Each decision records context, the choice, and its consequences. Add new entries
   - Snapshots without the field load as `distance_zone`, and the field is left out of the input hash when it holds that value, so existing records keep their hashes.
   - `out["setback"]["method"]` and the trace formula change only for the new method, so old results reproduce byte-for-byte. `ENGINE_VERSION` is unchanged for the same reason.
   - No schema or migration change.
+
+## TD-27 Setback construction: diagnostics, review gate and approval (extends TD-26)
+- **Construction** (`geometry/setback_construction.py`):
+  - The parcel is never modified.
+  - Each edge has a raw OFFSET (the same length as the edge) and a join at each vertex: `intersection`, `collinear`, `step`, `parallel_step`, `antiparallel` or `zero`.
+  - Each offset is trimmed/extended to its two joins. The trimmed and extended portions are recorded, together with the noded faces (kept, and discarded with a reason), the clipped and strip-cut areas, the per-edge use in the final boundary (`used`, `partly_used`, `collapsed`, `eliminated`) and the validated buildable area.
+- **Tolerances** (local metric frame, metres, coordinates never rounded during computation):
+  - `LINEAR_TOL_M = 1e-6`: coincident points, zero-length portions.
+  - `PARALLEL_SIN = 1e-9`: parallel edges, no unique intersection.
+  - `JOG_ANGLE_DEG = 0.5`: nearly parallel edges with different setbacks.
+  - `REMOTE_FACTOR = 5`: a join further than 5 × the larger adjacent setback from its vertex.
+  - `AREA_TOL_M2 = 1e-4`: per piece; smaller pieces are floating-point noise along offset lines.
+  - Output is rounded to 6 decimals only when results are serialised.
+- **Severities:**
+  - `info`: unambiguous. Collinear edges with equal setbacks, zero setbacks.
+  - `review`: a convention was applied, or something was removed, so a reviewer decides. This covers `parallel_offsets`, `antiparallel_edges`, `remote_intersection`, `collapsed_edge`, `self_intersection`, `inverted_offset`, `outside_parcel`, `strip_cut`, `edge_eliminated`, `multiple_polygons` and `empty_result`.
+  - `error`: the final geometry fails validation (invalid, outside the parcel, or overlapping a strip). It blocks and cannot be approved.
+- **Review gate:** with the offset method, the engine reports the setback area only when there is no `error` and every `review` item key is covered by an approval whose fingerprint matches. Otherwise the setback section fails with `setback_review_required` and no area. The construction itself is still returned for inspection.
+- **Fingerprint:** separate SHA-256 hashes of the boundary points, edge classifications, setback values used, rule version + land-use code, units/CRS, and method + construction version. The approval stores these parts, so a stale approval names what changed. The drawing revision is deliberately not included: adding the derived layers must not invalidate the approval.
+- **Approval store:** migration 5 adds `setback_approvals`.
+  - A new table is needed because an approval is a reviewer-signed record with its own fingerprint and construction snapshot. None of the existing tables fits that.
+  - The change is purely additive: existing tables are untouched, and the pre-migration backup runs as usual.
+  - Approvals are append-only; the newest one applies.
+  - Items that need review require permission `approve_setback` (reviewer/admin) and a note. A clean construction can be stored by anyone allowed to calculate.
+  - The approval is copied into the calculation inputs (`setback_approval`, left out of the hash when empty), so approved calculations reproduce.
+- **Derived layers:** accepting writes the construction steps to `SETBACK_*` layers. Their entities have `meta.source = "derived"`, `derived_kind = "setback_construction"` and the approval id, and are saved in a new drawing revision. *Add generated setback geometry* now replaces only its own entities (`buildable_limit`, `setback_violation`) and no longer removes the construction layers.
+- **Real data (2,867 Petra parcels, edge 1 front 4 m, others 3 m):**
+  - 1,270 parcels need no review.
+  - The most common review items: collapsed offsets of very short digitised segments (1,328), self-intersections (1,051), eliminated offsets (637), strip cuts (564), parallel offsets (486), remote intersections (245).
+  - One parcel failed validation until the strip-overlap check was made per piece, matching the strip cut. Noise summed over 1,285 offsets had exceeded 1 cm² in total.
+- **Not claimed:** equivalence with AutoCAD. `tests/test_setback_reference.py` compares against the authority's reference drawings once they are provided (`SLS_SETBACK_REFERENCES`).

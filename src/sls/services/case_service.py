@@ -34,6 +34,16 @@ DERIVED_LAYERS = {
     "setback": "SETBACK_BOUNDARY",
     "violation": "SETBACK_VIOLATIONS",
 }
+# Layers written when a setback construction is accepted in the preview (one per construction step).
+CONSTRUCTION_LAYERS = {
+    "offset": ("SETBACK_OFFSETS", "#4FC3F7"),       # raw OFFSET of each edge (same length as the edge)
+    "joined": ("SETBACK_TRIM_EXTEND", "#80DEEA"),   # each offset trimmed/extended to its neighbours
+    "trimmed": ("SETBACK_TRIMMED", "#EF5350"),      # portions removed by trimming
+    "extended": ("SETBACK_EXTENDED", "#FFD54F"),    # portions added by extending
+    "corner": ("SETBACK_CORNERS", "#F06292"),       # join points at each vertex
+    "discarded": ("SETBACK_DISCARDED", "#9E9E9E"),  # faces removed from the joined ring, with reason
+    "buildable": ("SETBACK_BUILDABLE", "#66BB6A"),  # final validated buildable area
+}
 
 
 @dataclass
@@ -331,12 +341,60 @@ class CaseService:
         )
         inputs.zoning = self.zoning_for_boundary(loaded.drawing, parcel.boundary_entity_id, case.units.crs_id)
         inputs.setback_method = self.ws.settings.setback_method
+        if inputs.setback_method == "offset_corner":
+            inputs.setback_approval = self.ws.setback_approvals.for_inputs(case_id)
         if parcel.verified and not verified:
             inputs.extraction_issues.append({
                 "severity": "error", "code": "boundary_changed",
                 "message": "The property boundary changed after it was verified; verify it again.", "entity_id":
                 parcel.boundary_entity_id})
         return inputs
+
+    # -- setback construction preview / approval ------------------------------------------------
+
+    def setback_preview(self, case_id: str) -> dict[str, Any]:
+        """Run the setback construction without storing anything (the drawing is not modified)."""
+        inputs = self.build_inputs(case_id)
+        if inputs.setback_method != "offset_corner":
+            raise ValidationError("The setback preview needs the surveyor offset method (Settings → Setback method).")
+        results = run_calculation(inputs)
+        return {"construction": results.get("setback_construction"), "errors": results.get("errors", []),
+                "parcel_wkt": (results.get("parcel") or {}).get("wkt", ""),
+                "issues": results.get("issues", []), "setback": results.get("setback"),
+                "approval": self.ws.setback_approvals.latest(case_id), "rule_version_id": inputs.rule_version_id}
+
+    def approve_setback(self, case_id: str, note: str, fingerprint: str) -> dict[str, Any]:
+        """Accept the previewed construction: store the approval and its layers as a new drawing revision.
+
+        ``fingerprint`` is the one shown in the preview; if the case changed meanwhile, nothing is stored.
+        """
+        from ..persistence.db import new_id
+
+        user = self.ws.user
+        preview = self.setback_preview(case_id)
+        con = preview["construction"]
+        if con is None:
+            blocking = "; ".join(e["message"] for e in preview["errors"]) or "no setback construction"
+            raise ValidationError(f"There is no setback construction to approve: {blocking}")
+        if con["fingerprint"] != fingerprint:
+            raise ValidationError("The case changed while the preview was open. Reopen the setback preview.")
+        errors = [i["message"] for i in con["issues"] if i["severity"] == "error"]
+        if errors:
+            raise ValidationError("Invalid setback geometry cannot be approved: " + " ".join(errors))
+        if con["review_keys"]:
+            user.require("approve_setback")
+            if not note.strip():
+                raise ValidationError("Enter a note explaining the resolution of the items that need review.")
+        else:
+            user.require("run_calculation")
+        loaded = self.survey_drawing(case_id)
+        if loaded is None:
+            raise ValidationError("The case has no survey drawing.")
+        approval_id = new_id()
+        _add_construction(loaded.drawing, con, approval_id)
+        rev = self.ws.drawings.save_revision(user, loaded.record.id, loaded.drawing, "setback construction approved")
+        return self.ws.setback_approvals.create(user, case_id, con, "offset_corner", note.strip(),
+                                                preview["rule_version_id"], loaded.record.id, rev.id, approval_id)
 
     def run_calculation(self, case_id: str, floor_order: list[str] | None = None) -> CalculationRecord:
         inputs = self.build_inputs(case_id, floor_order)
@@ -358,7 +416,8 @@ class CaseService:
         Generated entities carry ``meta.source = "derived"`` and the calculation ID, so
         they stay distinguishable from surveyed geometry and are ignored as inputs.
         """
-        for eid in [e.id for e in drawing.entities.values() if e.meta.get("source") == "derived"]:
+        for eid in [e.id for e in drawing.entities.values() if e.meta.get("source") == "derived"
+                    and e.meta.get("derived_kind") in ("buildable_limit", "setback_violation")]:
             del drawing.entities[eid]
         for key, name in DERIVED_LAYERS.items():
             drawing.ensure_layer(name, role="setback" if key == "setback" else "setback_violation", derived=True,
@@ -371,6 +430,43 @@ class CaseService:
         added += _add_polys(drawing, plan.get("violation_wkt", ""), DERIVED_LAYERS["violation"],
                             {"source": "derived", "calculation_id": calc_id, "derived_kind": "setback_violation"})
         return added
+
+
+def _add_construction(drawing: Drawing, con: dict[str, Any], approval_id: str) -> int:
+    """Replace the setback-construction layers' entities with those of ``con`` (drawing units)."""
+    for eid in [e.id for e in drawing.entities.values() if e.meta.get("derived_kind") == "setback_construction"]:
+        del drawing.entities[eid]
+    for name, color in CONSTRUCTION_LAYERS.values():
+        drawing.ensure_layer(name, role="setback", derived=True, color=color)
+    base = {"source": "derived", "derived_kind": "setback_construction", "approval_id": approval_id}
+    n = 0
+
+    def line(key: str, seg: list[list[float]], **meta: Any) -> None:
+        nonlocal n
+        drawing.add(Entity("line", CONSTRUCTION_LAYERS[key][0], {"p1": list(seg[0]), "p2": list(seg[1])},
+                           meta={**base, "step": key, **meta}))
+        n += 1
+
+    for e in con["edges"]:
+        info = {"edge": e["index"], "boundary_type": e["boundary_type"], "setback_m": e["setback_m"],
+                "outcome": e["outcome"]}
+        line("offset", e["raw_offset"], **info)
+        if not e["collapsed"]:
+            line("joined", e["trimmed_extended"], **info)
+        for seg in e["trimmed"]:
+            line("trimmed", seg, **info)
+        for seg in e["extended"]:
+            line("extended", seg, **info)
+    for j in con["joins"]:
+        for q in j["points"]:
+            drawing.add(Entity("point", CONSTRUCTION_LAYERS["corner"][0], {"position": list(q)},
+                               meta={**base, "step": "corner", "vertex": j["vertex"], "join": j["kind"]}))
+            n += 1
+    for f in con["discarded"]:
+        n += _add_polys(drawing, f["wkt"], CONSTRUCTION_LAYERS["discarded"][0],
+                        {**base, "step": "discarded", "reason": f["reason"], "area_m2": f["area_m2"]})
+    n += _add_polys(drawing, con["buildable_wkt"], CONSTRUCTION_LAYERS["buildable"][0], {**base, "step": "buildable"})
+    return n
 
 
 def _add_polys(drawing: Drawing, wkt_text: str, layer: str, meta: dict[str, Any]) -> int:

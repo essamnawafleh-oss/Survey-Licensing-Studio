@@ -105,7 +105,8 @@ def test_setback_change_on_nearly_straight_boundary_is_a_perpendicular_step():
 def test_far_reaching_acute_corner_is_listed_for_review():
     res = compute_setbacks_offset(Polygon([(0, 0), (40, 0), (5, 8)]), ["front", "side", "rear"],
                                   {"front": 2, "side": 1, "rear": 1})
-    assert res.status == "ok" and any("vertex(es) 2" in w for w in res.warnings)
+    assert res.status == "ok"
+    assert [(i.code, i.vertices) for i in res.construction.by_severity("review")] == [("remote_intersection", [2])]
 
 
 def test_zero_setbacks_keep_the_parcel():
@@ -179,7 +180,8 @@ def test_snapshots_from_before_the_method_field_keep_their_hash(sample_dxf):
 
     inputs = _inputs(sample_dxf)
     d = inputs.to_dict()
-    del d["setback_method"]  # a snapshot stored before the field existed
+    del d["setback_method"]  # a snapshot stored before the setback fields existed
+    del d["setback_approval"]
     old_hash = hashlib.sha256(json.dumps(d, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
                               .encode("utf-8")).hexdigest()
     restored = CalculationInputs.from_dict(d)

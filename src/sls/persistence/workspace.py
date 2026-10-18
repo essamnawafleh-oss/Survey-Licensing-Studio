@@ -107,6 +107,9 @@ class Workspace:
         from .zoning_repo import ZoningRepository
 
         self.zoning = ZoningRepository(self)
+        from .setback_approvals_repo import SetbackApprovalRepository
+
+        self.setback_approvals = SetbackApprovalRepository(self)
 
     @property
     def db_path(self) -> Path:

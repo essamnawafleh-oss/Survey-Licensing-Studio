@@ -144,6 +144,7 @@ class MainWindow(QMainWindow):
         m_case = mb.addMenu(tr("menu.case"))
         for key, slot in (("act.case_details", self.edit_case), ("act.rules", self.open_rules),
                           ("act.boundary", self.open_boundary), ("act.setback_override", self.open_override),
+                          ("act.setback_preview", self.setback_preview),
                           ("act.calculate", self.calculate), ("act.results", self.show_results), ("act.licenses", self.open_licenses),
                           ("act.media", self.open_media), ("act.report", self.open_report),
                           ("act.find_parcel", self.find_parcel),
@@ -599,6 +600,23 @@ class MainWindow(QMainWindow):
 
         OverrideDialog(self.ws, self.case_id, self).exec()
         self._refresh_case_summary()
+
+    def setback_preview(self) -> None:
+        if self.stack and self.stack.dirty:
+            if QMessageBox.question(self, tr("act.setback_preview"), tr("calc.save_first")) != QMessageBox.Yes:
+                return
+            if not self.save_drawing():
+                return
+        from .dialogs.setback_preview_dialog import SetbackPreviewDialog
+
+        try:
+            dlg = SetbackPreviewDialog(self.ws, self.case_id, self)
+        except Exception as exc:  # noqa: BLE001
+            show_error(self, exc)
+            return
+        if dlg.exec() and dlg.approval is not None:
+            self._set_loaded(self.service.survey_drawing(self.case_id))  # approval added a derived revision
+            self.cmd.message(tr("sbp.accepted", by=dlg.approval["approved_by"]), "ok")
 
     def calculate(self) -> None:
         if self.stack and self.stack.dirty:

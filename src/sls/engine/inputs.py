@@ -56,6 +56,8 @@ class CalculationInputs:
     # Setback algorithm (geometry.setbacks). Snapshots stored before this field existed used the
     # distance-zone method, so that is the default when a snapshot is loaded.
     setback_method: str = "distance_zone"
+    # Reviewer approval of the offset construction (setback_approvals); matched by fingerprint.
+    setback_approval: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -72,6 +74,8 @@ class CalculationInputs:
         d = self.to_dict()
         if d.get("setback_method") == "distance_zone":
             del d["setback_method"]  # keeps the hashes of snapshots stored before the field existed
+        if d.get("setback_approval") is None:
+            d.pop("setback_approval", None)  # same reason
         return json.dumps(d, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
     def input_hash(self) -> str:

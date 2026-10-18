@@ -19,6 +19,7 @@ from shapely.ops import unary_union
 from ..core.errors import SlsError
 from ..geometry.areas import Footprint, LinearFeature, floor_areas, length_totals, setback_intersections
 from ..geometry.primitives import MetricFrame, build_linestring, build_polygon
+from ..geometry.setback_construction import CONSTRUCTION_VERSION, ERROR
 from ..geometry.setbacks import METHOD_OFFSET_CORNER, SetbackResult, setback_function, suggest_edge_types
 from ..licensing.reconcile import reconcile
 from .inputs import CalculationInputs
@@ -163,6 +164,8 @@ def run_calculation(inputs: CalculationInputs) -> dict[str, Any]:
                                                                   inputs.sliver_tolerance_m2)
             except SlsError as exc:
                 fail("setback", exc)
+            if setback is not None and setback.construction is not None:
+                setback = _setback_gate(inputs, setback, distances, frame, issues, out, fail)
     if parcel is not None and inputs.roads and not inputs.edge_types:
         roads = []
         for r in inputs.roads:
@@ -182,9 +185,12 @@ def run_calculation(inputs: CalculationInputs) -> dict[str, Any]:
         if setback.method == METHOD_OFFSET_CORNER:
             # Only for the new method, so results of earlier distance-zone calculations reproduce unchanged.
             out["setback"]["method"] = setback.method
+            out["setback"]["rule_version_id"] = inputs.rule_version_id
+            for row, e in zip(out["setback"]["edges"], setback.construction.edges):  # type: ignore[union-attr]
+                row.update(start_action=e.start_action, end_action=e.end_action, outcome=e.outcome)
             formula = ("Buildable = Parcel ∩ polygon of the inward offsets of each edge i by d_i, consecutive "
                        "offsets trimmed/extended to their intersection (sharp corners); loops of collapsed "
-                       "edges removed")
+                       "edges removed; validated before the area is taken")
         else:
             formula = "Buildable = Parcel − union over edges i of { p : dist(p, edge_i) < d_i }"
         trace.add("setback", "Buildable area after setbacks", formula,
@@ -288,6 +294,67 @@ def run_calculation(inputs: CalculationInputs) -> dict[str, Any]:
     out["issues"] = issues
     out["trace"] = trace.steps
     return _round(out)
+
+
+FINGERPRINT_LABELS = {"boundary": "property boundary", "edge_types": "edge classifications",
+                      "setbacks": "setback values", "rule": "rule version / land-use classification",
+                      "crs": "units / coordinate system", "method": "setback method"}
+
+
+def setback_fingerprint(inputs: CalculationInputs, distances: dict[str, float]) -> dict[str, Any]:
+    """Identity of a setback construction: what a reviewer approval applies to."""
+    def h(obj: Any) -> str:
+        return hashlib.sha256(json.dumps(obj, ensure_ascii=False, sort_keys=True,
+                                         separators=(",", ":")).encode("utf-8")).hexdigest()
+    used = sorted(set(inputs.edge_types))
+    parts = {"boundary": h(inputs.parcel.points if inputs.parcel else None),
+             "edge_types": h(list(inputs.edge_types)),
+             "setbacks": h({t: distances.get(t) for t in used}),
+             "rule": h([inputs.rule_version_id, inputs.land_use_code]),
+             "crs": h([inputs.units.get("unit"), inputs.units.get("crs_id"), inputs.units.get("crs_kind")]),
+             "method": h([inputs.setback_method, CONSTRUCTION_VERSION])}
+    return {"fingerprint": h(parts), "fingerprint_parts": parts}
+
+
+def _setback_gate(inputs: CalculationInputs, setback: SetbackResult, distances: dict[str, float], frame: MetricFrame,
+                  issues: list, out: dict[str, Any], fail) -> SetbackResult | None:  # type: ignore[type-arg,no-untyped-def]
+    """Offset construction: area only when validated, and when every review item is approved."""
+    con = setback.construction
+    assert con is not None
+    inv = 1.0 / frame.factor
+    fp = setback_fingerprint(inputs, distances)
+    out["setback_construction"] = {
+        **con.to_dict(lambda p: (p[0] * inv + frame.origin_x, p[1] * inv + frame.origin_y), lambda g: _wkt(g, frame)),
+        **fp, "review_keys": con.review_keys, "approval": None}
+    errors = con.by_severity(ERROR)
+    if errors:
+        fail("setback", " ".join(i.message for i in errors), "setback_invalid")
+        return None
+    review = con.review_keys
+    if not review:
+        return setback
+    appr = inputs.setback_approval or None
+    if appr:
+        changed = [k for k, v in fp["fingerprint_parts"].items() if (appr.get("fingerprint_parts") or {}).get(k) != v]
+        missing = [k for k in review if k not in set(appr.get("issue_keys") or [])]
+        if not changed and not missing:
+            out["setback_construction"]["approval"] = {k: appr.get(k) for k in ("id", "approved_by", "approved_at",
+                                                                               "note")}
+            issues.append({"severity": "warning", "code": "setback_reviewed",
+                           "message": f"{len(review)} setback construction item(s) were reviewed and accepted by "
+                                      f"{appr.get('approved_by')} on {appr.get('approved_at')}: {appr.get('note')}",
+                           "entity_id": ""})
+            return setback
+        if changed:
+            issues.append({"severity": "warning", "code": "setback_approval_stale",
+                           "message": "The setback approval by {by} no longer applies: the {what} changed since it "
+                                      "was given.".format(by=appr.get("approved_by"),
+                                                           what=", ".join(FINGERPRINT_LABELS[k] for k in changed)),
+                           "entity_id": ""})
+    codes = sorted({i.code for i in con.issues if i.key in review})
+    fail("setback", f"{len(review)} setback construction item(s) need reviewer resolution before the buildable area "
+                    f"is calculated ({', '.join(codes)}). Open Case → Setback preview.", "setback_review_required")
+    return None
 
 
 def _zoning_checks(inputs: CalculationInputs, issues: list, trace: Trace, out: dict[str, Any]) -> None:  # type: ignore[type-arg]

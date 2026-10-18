@@ -401,6 +401,28 @@ CREATE INDEX ix_zone_bbox ON zoning_pieces(layer_id, minx, maxx, miny, maxy);
 CREATE INDEX ix_zone_key ON zoning_pieces(layer_id, dls_key);
 """,
     ),
+    (
+        5,
+        "setback construction approvals (reviewer-signed, fingerprinted offset constructions)",
+        """
+CREATE TABLE setback_approvals (
+    id TEXT PRIMARY KEY,
+    case_id TEXT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+    method TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    fingerprint_parts_json TEXT NOT NULL,
+    issue_keys_json TEXT NOT NULL,
+    construction_json TEXT NOT NULL,
+    rule_version_id TEXT,
+    drawing_id TEXT,
+    drawing_revision_id TEXT,
+    note TEXT NOT NULL DEFAULT '',
+    approved_by TEXT NOT NULL,
+    approved_at TEXT NOT NULL
+);
+CREATE INDEX ix_setback_approvals_case ON setback_approvals(case_id, approved_at);
+""",
+    ),
 ]
 
 # Default configurable case fields, inserted once by migration seeding (editable later).

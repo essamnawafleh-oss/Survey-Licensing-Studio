@@ -99,6 +99,33 @@ modified, and stored files are never overwritten.
 
      The previous method, minimum-distance zones (rounded inner corners), can still be
      selected. Each calculation records the method it used, and is always reproduced with it.
+   - **Setback construction preview** (*Case → Setback construction preview…*). Shows each
+     construction step as a separate layer that can be switched on and off:
+     - the original boundary
+     - each edge's offset line
+     - the trimmed/extended lines, with trimmed portions in red and extended portions in yellow
+     - the intersection points
+     - discarded faces, each with its reason
+     - the final buildable area
+
+     Next to the drawing are the diagnostics and a per-edge audit table (classification,
+     setback, rule version, trim/extend at each end, outcome).
+     - Each diagnostic is *info*, *needs review* or *error*. Items that need review include:
+       parallel offsets with different setbacks, remote intersections, collapsed or eliminated
+       offsets, self-intersections, area cut by setback strips or clipped to the parcel,
+       several polygons, and an empty result.
+     - While any item needs review, the calculation gives **no buildable area**. A reviewer
+       must accept the construction with a note. An *error* (validation failure) cannot be
+       accepted and must be corrected.
+     - *Cancel* changes nothing. *Accept* stores a reviewer-signed approval and writes the
+       construction as derived layers (`SETBACK_OFFSETS`, `SETBACK_TRIM_EXTEND`,
+       `SETBACK_TRIMMED`, `SETBACK_EXTENDED`, `SETBACK_CORNERS`, `SETBACK_DISCARDED`,
+       `SETBACK_BUILDABLE`) in a new drawing revision. The surveyed boundary is never changed.
+     - The approval lapses automatically if the boundary, an edge classification, a setback
+       value, the rule version or classification, the units/CRS or the method changes. The
+       calculation then says which one changed.
+     - Results have not yet been compared with the authority's AutoCAD drawings, so no
+       equivalence with AutoCAD is claimed (see *Development → setback references*).
 9. **Photos, attachments, notes:** *Case → Photos, attachments & notes*. Notes appear in the
    report and never change any calculated value.
 10. **Report:** *Case → PDF report*. Set the options, **Preview**, then **Export revision**
@@ -256,6 +283,19 @@ round trips, persistence/backup/restore, PDF content (Arabic fonts, page numbers
 scale, attachments, reproducibility), OCR (skipped without Tesseract), i18n completeness,
 architecture layering and offscreen UI workflows. All fixtures are **synthetic** (see
 `src/sls/samples.py`). Never commit real survey or license data.
+
+### Setback reference drawings (AutoCAD comparison)
+
+`tests/test_setback_reference.py` compares the construction with drawings made with the
+authority's approved AutoCAD workflow. None is bundled: the drawings are confidential and
+none has been supplied yet.
+- Put pairs of `<name>.dxf` and `<name>.json` in a local folder outside the repository and
+  set `SLS_SETBACK_REFERENCES` to that folder.
+- The DXF holds the parcel on layer `PARCEL` (its vertex order is the edge order) and the
+  approved buildable boundary on layer `BUILDABLE_APPROVED`.
+- The JSON holds the edge classifications, the setbacks, `tolerance_m` and the source.
+
+The test checks the Hausdorff distance between the boundaries and the difference in area.
 
 ## Known limitations (v0.1)
 
