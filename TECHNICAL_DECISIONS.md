@@ -77,3 +77,18 @@ Each decision records context, the choice, and its consequences. Add new entries
 
 ## TD-15 Canvas
 - A custom `QWidget` with `QPainter` and a world→screen transform with Y up (surveying convention). Paths are cached per entity in a local origin frame to avoid float precision issues with large grid coordinates such as JTM eastings and northings. Hit testing and snapping run in world coordinates.
+
+## TD-16 Bidi implementation
+- python-bidi 0.6's compiled `bidi.get_display` does not mirror brackets (UBA rule L4), so "(م)" was rendered as ")م(". The pure-Python `bidi.algorithm.get_display` from the same package does mirror them and is used instead. This was found by rendering report pages and inspecting them.
+- Noto Naskh Arabic has no Latin glyphs, so Noto Sans (OFL) is bundled too. Text is drawn as runs: Arabic-script characters in Naskh, everything else in Sans, with neutral characters following the previous run only when that font has the glyph.
+
+## TD-17 Regulatory plan transformation
+- A translation or a 4-parameter similarity (Helmert) transformation is least-squares fitted from control-point pairs that the user types in, solved in a centred frame for numerical stability. Per-point residuals and the RMS are shown before applying.
+- Applying it creates a **new revision** of the regulatory drawing and records the parameters, the control points and who applied it in `drawing.info["transforms"]` and in the audit log. The survey drawing is never transformed, and visual or automatic alignment is never used.
+- Affine and projective transforms, and datum transformations between national systems, are not implemented. They need confirmation of the authority's official parameters first.
+
+## TD-18 Calculation inputs exclude derived geometry
+- Generated setback and violation outlines (`meta.source = "derived"`) are excluded from the inputs, and from the input hash through `Drawing.source_content_hash()`. Adding them to the drawing therefore does not change the calculation result or mark the calculation stale.
+
+## TD-19 Packaging
+- PyInstaller one-folder build using `packaging/launcher.py`. The package's `__main__.py` cannot be the frozen entry script because of its relative imports, which the Linux test build revealed. QtWebEngine is excluded to keep the build small; QtPdf is kept for the report preview.

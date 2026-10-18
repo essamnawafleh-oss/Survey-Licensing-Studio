@@ -134,3 +134,22 @@ def test_dialogs_construct(window, qtbot):
     lic = LicensesDialog(ws, cid)
     qtbot.addWidget(lic)
     assert lic.list.count() == 1
+
+
+def test_admin_and_transform_dialogs_construct(window, qtbot, sample_dxf):
+    from sls.ui.dialogs.admin_dialogs import LoginDialog, RestoreDialog, SettingsDialog, UsersDialog
+    from sls.ui.dialogs.fields_dialog import FieldsDialog
+    from sls.ui.dialogs.transform_dialog import TransformDialog
+
+    ws = window.ws
+    reg = window.service.import_drawing(window.case_id, sample_dxf, "regulatory")
+    tf = TransformDialog(window.service, reg.record.id)
+    for dlg in (SettingsDialog(ws.settings), UsersDialog(ws.users), LoginDialog(ws.users), RestoreDialog(ws.backup_dir),
+                FieldsDialog(ws), tf):
+        qtbot.addWidget(dlg)
+    from PySide6.QtWidgets import QTableWidgetItem
+
+    for c, v in enumerate(["0", "0", "1", "1"]):
+        tf.table.setItem(0, c, QTableWidgetItem(v))
+    tf._compute()
+    assert tf.apply_btn.isEnabled() and "RMS" in tf.result.text()

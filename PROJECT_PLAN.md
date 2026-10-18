@@ -72,6 +72,49 @@ at the end of this file.
 6. **Data integrity.** Original files are never overwritten (content-hashed copies).
    Calculations are pinned to a rule version and to license record revisions.
 
-## Feature status
+## Feature status (2026-10-18, 117 automated tests passing, 2 DWG tests skipped)
 
-Maintained as features land. See the bottom of README.md for user-facing limitations.
+| Area | Feature | Status | Evidence / notes |
+|------|---------|--------|------------------|
+| M1 | Desktop window, dark CAD theme, docks, toolbars, status bar | ✅ | `ui/`, `tests/test_ui_smoke.py`, screenshots inspected |
+| M1 | SQLite schema, migrations, transactions, stable UUIDs | ✅ | `persistence/schema.py`, `tests/test_persistence.py` |
+| M1 | Case creation/saving/reopening, configurable fields + editor | ✅ | `CaseRepository`, `CaseDialog`, `FieldsDialog` |
+| M1 | Controlled file store (hash-named copies, never overwrite) | ✅ | `test_file_store_never_overwrites_and_verifies` |
+| M1 | Arabic/English UI, RTL layout | ✅ | `tests/test_i18n.py` (key parity), AR screenshots |
+| M1 | Automatic + manual backup, restore (UI + CLI) | ✅ | `test_backup_and_restore`, `test_cli_backup_list_and_restore` |
+| M1 | Local accounts, roles, audit log | ✅ | Roles gate workflow actions only (TD-11) |
+| M2 | DXF import with full entity accounting, layer/attribute preservation | ✅ | `tests/test_cad_dxf.py` |
+| M2 | DXF export, round trip of IDs/meta/layers/units/bulges/dimensions | ✅ | `test_round_trip_preserves_ids_meta_layers_units` |
+| M2 | Layer manager (vis/lock/colour/linetype/weight/transparency/role/floor/order/search) | ✅ | undoable via `LayerState` |
+| M2 | Canvas: pan/zoom/extents, window/crossing select, grid, object/grid snap, ortho | ✅ | |
+| M2 | Tools: line, polyline, rectangle, circle, move, copy, rotate, scale, offset, erase, dist, area, text, dimension, undo/redo | ✅ | `tests/test_cad_ops.py`, UI tests |
+| M2 | Trim / extend | 🟡 | LINE entities only |
+| M2 | Command line with aliases and coordinate input | ✅ | |
+| M2 | Properties inspector (editable layer, coords, text, radius, floor, notes) | ✅ | |
+| M3 | Boundary validation (closure, validity, degenerate, zero-area) | ✅ | `tests/test_geometry.py` |
+| M3 | Excel rule import: sheet/header/mapping/validation/preview/immutable versions/verification | ✅ | `tests/test_rules_excel.py` |
+| M3 | Per-edge setback geometry (non-convex, narrow, empty, slivers, missing rule stops) | ✅ | TD-06 |
+| M3 | Floor areas (union, overlap/duplicate detection), setback intersections, outside-parcel | ✅ | |
+| M3 | Wall/fence lengths (overlap counted once) | ✅ | |
+| M3 | Calculation trace + reproducibility (input/result hashes) | ✅ | `test_calculation_is_reproducible_from_stored_inputs` |
+| M3 | Preliminary eligibility checks (setbacks, coverage, floors, FAR) | ✅ | not a legal decision (TD-07) |
+| M4 | License register, multiple documents, page refs, verification, revisions | ✅ | `LicensesDialog`, `test_license_edit_resets_verification_and_bumps_revision` |
+| M4 | Reconciliation: verified-only, conflicts, duplicates, exceeding measured | ✅ | `tests/test_licensing_engine.py` |
+| M4 | Optional offline OCR (Tesseract ara+eng), unverified notes only | ✅ | `tests/test_ocr.py` (ran with Tesseract 5) |
+| M5 | Multipage PDF: cover, vector drawing at 1:N, tables, licenses, remaining, violations, notes, trace, photos, documents manifest | ✅ | `tests/test_reporting.py`, rendered pages inspected |
+| M5 | Arabic shaping/bidi/mirroring, embedded Noto fonts | ✅ | |
+| M5 | Page selection, attachments merge, missing/unsupported attachments reported | ✅ | |
+| M5 | Draft/reviewed/approved with approval blockers; revisions kept; manifest JSON | ✅ | |
+| M5 | Preview in app (QtPdf) | ✅ | |
+| — | Regulatory plan: separate CRS, extent check, control-point transformation as new revision | ✅ | `tests/test_transform.py` |
+| M6 | DWG via ODA File Converter | ⛔ unverified | adapter exists; acceptance tests skip without converter + real DWG |
+| M6 | Windows packaging (PyInstaller spec + build script) | 🟡 | build-tested on Linux only |
+
+### Next steps
+1. Install ODA File Converter on a Windows test machine, add real (non-confidential) DWG
+   files to `tests/fixtures/dwg/`, and run the DWG acceptance tests.
+2. Build and smoke-test the Windows executable with `packaging/build_windows.ps1`.
+3. With the department: confirm the setback corner convention, the official rule-table
+   layout, the case form fields and the report title block. Then pilot with real (local,
+   never committed) cases.
+4. Trim/extend for polylines and arcs; translate engine diagnostic messages.

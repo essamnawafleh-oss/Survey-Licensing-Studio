@@ -94,6 +94,26 @@ class CaseService:
                                       Drawing.with_default_layers(case.units))
         return self.load_drawing(rec.id)
 
+    def apply_transformation(self, drawing_id: str, src: list[tuple[float, float]], dst: list[tuple[float, float]],
+                             kind: str) -> LoadedDrawing:
+        """Fit and apply a control-point transformation as a NEW revision of the given drawing."""
+        from ..cad.transform import fit, transform_drawing
+        from ..persistence.db import now_iso
+
+        loaded = self.load_drawing(drawing_id)
+        result = fit(src, dst, kind)
+        out = transform_drawing(loaded.drawing, result.transform)
+        record = {**result.transform.to_dict(), "rms": result.rms, "residuals": result.residuals,
+                  "control_points": [{"source": list(a), "target": list(b)} for a, b in zip(src, dst)],
+                  "applied_by": self.ws.user.username, "applied_at": now_iso(),
+                  "from_revision": loaded.revision.revision}
+        out.info.setdefault("transforms", []).append(record)
+        rev = self.ws.drawings.save_revision(self.ws.user, drawing_id, out,
+                                             f"Control-point {kind} transformation (RMS {result.rms:.4f})")
+        self.ws.audit.record(self.ws.user, "transform_drawing", "drawing", drawing_id, loaded.record.case_id,
+                             **{k: v for k, v in record.items() if k != "residuals"})
+        return LoadedDrawing(loaded.record, rev, out)
+
     # -- rules ---------------------------------------------------------------------------
 
     def applied_rule(self, case_id: str) -> tuple[LandUseRule | None, str | None, bool, str]:

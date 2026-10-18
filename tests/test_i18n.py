@@ -46,7 +46,8 @@ def used_keys() -> set[str]:
                                   "demo_case", "backup", "restore", "settings", "users", "exit", "undo", "redo",
                                   "erase", "select_all", "zoom_extents", "grid", "osnap", "grid_snap", "ortho",
                                   "lineweights", "case_details", "rules", "boundary", "calculate", "results",
-                                  "licenses", "media", "report", "regulatory_check", "limitations", "about")}
+                                  "licenses", "media", "report", "regulatory_check", "regulatory_transform",
+                                  "case_fields", "limitations", "about")}
     return keys
 
 

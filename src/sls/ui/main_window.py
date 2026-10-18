@@ -113,6 +113,7 @@ class MainWindow(QMainWindow):
         m_file.addAction(self._act("act.restore", self.restore_backup))
         m_file.addAction(self._act("act.settings", self.open_settings))
         m_file.addAction(self._act("act.users", self.manage_users))
+        m_file.addAction(self._act("act.case_fields", self.manage_fields))
         m_file.addSeparator()
         m_file.addAction(self._act("act.exit", self.close, "Ctrl+Q"))
 
@@ -141,7 +142,8 @@ class MainWindow(QMainWindow):
                           ("act.boundary", self.open_boundary), ("act.calculate", self.calculate),
                           ("act.results", self.show_results), ("act.licenses", self.open_licenses),
                           ("act.media", self.open_media), ("act.report", self.open_report),
-                          ("act.regulatory_check", self.regulatory_check)):
+                          ("act.regulatory_check", self.regulatory_check),
+                          ("act.regulatory_transform", self.regulatory_transform)):
             m_case.addAction(self._act(key, slot, needs_case=key != "act.rules"))
 
         m_help = mb.addMenu(tr("menu.help"))
@@ -693,6 +695,25 @@ class MainWindow(QMainWindow):
         from .dialogs.admin_dialogs import UsersDialog
 
         UsersDialog(self.ws.users, self).exec()
+
+    def manage_fields(self) -> None:
+        try:
+            self.ws.user.require("manage_users")
+        except SlsError as exc:
+            show_error(self, exc)
+            return
+        from .dialogs.fields_dialog import FieldsDialog
+
+        FieldsDialog(self.ws, self).exec()
+
+    def regulatory_transform(self) -> None:
+        regs = self.ws.drawings.for_case(self.case_id, "regulatory")
+        if not regs:
+            QMessageBox.information(self, tr("act.regulatory_transform"), tr("reg.none"))
+            return
+        from .dialogs.transform_dialog import TransformDialog
+
+        TransformDialog(self.service, regs[-1].id, self).exec()
 
     def create_demo_case(self) -> None:
         """Synthetic demonstration case. Verification steps are deliberately left to the user."""
