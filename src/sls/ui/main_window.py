@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import tempfile
 from datetime import datetime
 from html import escape
@@ -594,6 +595,8 @@ class MainWindow(QMainWindow):
                 value = float(t.replace("٫", "."))
             except ValueError:
                 value = None
+            if value is not None and not math.isfinite(value):
+                value = None  # "nan"/"inf" are never distances or values
             if value is not None and tool.on_number(value):
                 self.canvas.update()
                 return

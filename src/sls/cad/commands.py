@@ -128,6 +128,8 @@ class UndoStack:
     def push(self, cmd: Command, already_applied: bool = False) -> None:
         if not already_applied:
             cmd.do(self.drawing)
+        if self._clean_index > len(self.done):
+            self._clean_index = -1  # the saved state was on the undone branch, which is now discarded
         self.done.append(cmd)
         self.undone.clear()
         if len(self.done) > self.limit:

@@ -4,6 +4,7 @@ Each test reproduces the original failure; synthetic data only.
 """
 from __future__ import annotations
 
+import math
 import threading
 
 import pytest
@@ -219,3 +220,160 @@ def test_p18_p19_backups_leave_no_sidecars_and_prune_keeps_safety_backups(tmp_pa
     left = list_backups(ws.backup_dir)
     assert pre in left and dailies[-1] in left and dailies[0] not in left
     ws.close()
+
+
+# C1-C15 -- CAD editing and DXF/DWG -----------------------------------------------------------------
+
+def test_c1_copied_entities_with_the_same_stored_id_are_all_kept(tmp_path):
+    import ezdxf
+
+    from sls.cad.dxf_io import export_dxf, import_dxf
+    from sls.cad.model import Drawing, Entity
+
+    d = Drawing.with_default_layers(None) if hasattr(Drawing, "with_default_layers") else Drawing()
+    d.add(Entity("line", "0", {"p1": [0, 0], "p2": [10, 0]}))
+    export_dxf(d, tmp_path / "a.dxf")
+    doc = ezdxf.readfile(str(tmp_path / "a.dxf"))
+    line = doc.modelspace().query("LINE")[0]
+    copy = line.copy()                      # AutoCAD COPY keeps the XDATA (same stored id)
+    copy.translate(0, 5, 0)
+    doc.modelspace().add_entity(copy)
+    doc.saveas(str(tmp_path / "b.dxf"))
+    drawing, report = import_dxf(tmp_path / "b.dxf")
+    lines = [e for e in drawing.entities.values() if e.kind == "line"]
+    assert len(lines) == 2 and report.duplicate_ids == 1
+    assert any("duplicate_of" in e.meta for e in lines)
+
+
+def test_c2_dirty_after_undo_then_new_edit():
+    from sls.cad.commands import AddEntities, UndoStack
+    from sls.cad.model import Drawing, Entity
+
+    d = Drawing()
+    st = UndoStack(d)
+    st.push(AddEntities([Entity("line", "0", {"p1": [0, 0], "p2": [1, 0]})]))
+    st.push(AddEntities([Entity("line", "0", {"p1": [0, 1], "p2": [1, 1]})]))
+    st.mark_clean()
+    st.undo()
+    st.push(AddEntities([Entity("line", "0", {"p1": [0, 2], "p2": [1, 2]})]))
+    assert st.dirty
+
+
+def _dxf(tmp_path, build, name="t.dxf"):
+    import ezdxf
+
+    doc = ezdxf.new()
+    doc.header["$INSUNITS"] = 6
+    build(doc.modelspace())
+    doc.saveas(str(tmp_path / name))
+    return tmp_path / name
+
+
+def test_c3_truncated_dxf_is_reported_not_imported_empty(tmp_path):
+    from sls.cad.dxf_io import import_dxf
+    from sls.core.errors import CadImportError
+
+    full = _dxf(tmp_path, lambda m: [m.add_line((i, 0), (i, 1)) for i in range(50)])
+    data = full.read_bytes()
+    for frac in (0.1, 0.5):
+        part = tmp_path / f"trunc_{frac}.dxf"
+        part.write_bytes(data[: int(len(data) * frac)])
+        with pytest.raises(CadImportError, match="damaged|not a valid"):
+            import_dxf(part)
+
+
+def test_c4_c10_text_alignment_and_multiline_round_trip(tmp_path):
+    from ezdxf.enums import TextEntityAlignment
+
+    from sls.cad.dxf_io import export_dxf, import_dxf
+
+    def build(m):
+        m.add_text("ALIGNED", height=1).set_placement((300, 300), (320, 300), align=TextEntityAlignment.ALIGNED)
+        m.add_text("MID", height=1).set_placement((200, 200), align=TextEntityAlignment.MIDDLE_CENTER)
+        m.add_mtext("line1\\Pline2", dxfattribs={"insert": (100, 100), "char_height": 1, "attachment_point": 5})
+
+    d, _ = import_dxf(_dxf(tmp_path, build))
+    texts = {e.data["text"]: e.data for e in d.entities.values() if e.kind == "text"}
+    assert texts["ALIGNED"]["position"] == [300.0, 300.0] and texts["ALIGNED"]["align_point"] == [320.0, 300.0]
+    assert texts["MID"]["position"] == [200.0, 200.0] and texts["MID"]["halign"] == 1
+    export_dxf(d, tmp_path / "out.dxf")
+    d2, _ = import_dxf(tmp_path / "out.dxf")
+    t2 = {e.data["text"]: e.data for e in d2.entities.values() if e.kind == "text"}
+    assert t2["ALIGNED"]["align_point"] == [320.0, 300.0] and t2["MID"]["halign"] == 1
+    assert t2["line1\nline2"]["attachment_point"] == 5
+
+
+def test_c5_polyline_with_too_few_vertices_is_damaged(tmp_path):
+    from sls.cad.dxf_io import import_dxf
+
+    def build(m):
+        m.add_polyline2d([(0, 0)])
+        m.add_line((0, 0), (1, 1))
+
+    d, report = import_dxf(_dxf(tmp_path, build))
+    assert not [e for e in d.entities.values() if e.kind == "polyline"]
+    assert any("damaged" in k for k in report.skipped) and report.damaged_handles
+
+
+def test_c6_bulge_arc_bbox_covers_the_arc():
+    from sls.cad import ops
+    from sls.cad.model import Entity
+
+    b = math.tan(math.radians(350) / 4)
+    e = Entity("polyline", "0", {"points": [[0, 0, b], [2, 0]], "closed": False})
+    x0, y0, x1, y1 = ops.fast_bbox(e)
+    assert y0 < -20 and x0 < -10 and x1 > 12
+
+
+def test_c7_c9_layer_case_and_illegal_names():
+    from sls.cad.model import Drawing, Entity, Layer
+
+    d = Drawing()
+    d.add_layer(Layer("Property_Boundary"))
+    e = d.add(Entity("line", "PROPERTY_BOUNDARY", {"p1": [0, 0], "p2": [1, 0]}))
+    assert e.layer == "Property_Boundary"
+    d.rename_layer("property_boundary", "PB")
+    assert e.layer == "PB"
+    for bad in ("WALL<1>", "A/B", "ROAD:EDGE", "طبقة*"):
+        with pytest.raises(ValueError, match="not allowed"):
+            d.rename_layer("PB", bad)
+
+
+def test_c8_c13_offset_and_extend_refuse_invalid_input():
+    from sls.cad import ops
+    from sls.cad.model import Entity
+
+    bow = Entity("polyline", "0", {"points": [[0, 0], [10, 10], [10, 0], [0, 10]], "closed": True})
+    with pytest.raises(ValueError, match="not a valid polygon"):
+        ops.offset(bow, 1, (2, 5))
+    zero = Entity("line", "0", {"p1": [1, 1], "p2": [1, 1]})
+    with pytest.raises(ValueError, match="zero length"):
+        ops.offset(zero, 1, (0, 0))
+    with pytest.raises(ValueError, match="zero length"):
+        ops.extend_line(zero, (1, 1), [])
+
+
+def test_c12_non_finite_coordinates_are_not_points():
+    from sls.ui.tools import parse_point
+
+    assert parse_point("nan,5", None) is None
+    assert parse_point("@1e999<0", (0, 0)) is None
+    assert parse_point("3,4", None) == (3.0, 4.0)
+
+
+def test_c14_c15_dwg_converter_failures_are_actionable(tmp_path, monkeypatch):
+    from sls.cad import dwg
+    from sls.cad.model import Drawing
+
+    junk = tmp_path / "notes.txt"
+    junk.write_text("x")
+    assert dwg.find_libredwg(str(junk)) is None          # not a converter
+    fake = tmp_path / "dwg2dxf"
+    fake.write_text("#!/bin/sh\nexit 0\n")              # not executable
+    assert dwg.find_libredwg(str(fake)) is None
+    oda = tmp_path / "ODAFileConverter"
+    oda.write_text("")
+    monkeypatch.setattr(dwg, "find_oda", lambda configured="": oda)
+    monkeypatch.setattr(dwg, "_convert_oda", lambda *a, **k: [])  # "succeeds" but writes nothing
+    with pytest.raises(dwg.DwgUnavailableError, match="wrote no DWG"):
+        dwg.export_dwg(Drawing(), tmp_path / "out.dwg", str(oda))

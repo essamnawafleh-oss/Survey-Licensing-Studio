@@ -54,6 +54,7 @@ class ImportReport:
     restored_sls_metadata: int = 0
     damaged_handles: list[str] = field(default_factory=list)
     inconsistent_text_alignment: int = 0
+    duplicate_ids: int = 0       # entities whose stored SLS id was already used (e.g. copied in CAD)
     converter: str = ""          # e.g. "LibreDWG 0.9.3" when imported from DWG
     converter_messages: list[str] = field(default_factory=list)
     crs_code: str = ""
@@ -120,8 +121,14 @@ class _Importer:
             meta.setdefault("source_handle", handle)
         stored = _read_sls_xdata(src)
         if stored:
-            ent.id = stored.get("id", ent.id)
             meta.update(stored.get("meta", {}))
+            sid = stored.get("id", ent.id)
+            if sid in self.drawing.entities:
+                # e.g. an exported entity copied in AutoCAD (XDATA is copied too): keep both entities
+                meta["duplicate_of"] = sid
+                self.report.duplicate_ids += 1
+            else:
+                ent.id = sid
             self.report.restored_sls_metadata += 1
         meta.setdefault("source", "survey")
         ent.meta = meta
@@ -190,6 +197,10 @@ class _Importer:
                     b = v.dxf.get("bulge", 0.0)
                     pts.append([v.dxf.location.x, v.dxf.location.y, b] if abs(b) > 1e-12
                                else [v.dxf.location.x, v.dxf.location.y])
+                if len(pts) < 2:
+                    self.count(self.report.skipped, f"{t} (fewer than 2 vertices — damaged)")
+                    self.report.damaged_handles.append(str(e.dxf.get("handle", "?")))
+                    return
                 self.add("polyline", layer, {"points": pts, "closed": bool(e.is_closed)}, e, meta)
                 self.count(bucket, t)
             elif e.is_3d_polyline:
@@ -221,33 +232,39 @@ class _Importer:
             self.add("point", layer, {"position": [p.x, p.y]}, e, meta)
             self.count(bucket, t)
         elif t in ("TEXT", "ATTRIB", "MTEXT"):
+            extra: dict[str, Any] = {}
             if t == "MTEXT":
                 p = e.dxf.insert
                 text = e.plain_text()
                 height = e.dxf.get("char_height", 1.0)
                 rotation = e.get_rotation()
                 meta["multiline"] = True
+                extra["attachment_point"] = int(e.dxf.get("attachment_point", 1))
             else:
-                halign = e.dxf.get("halign", 0)
+                halign, valign = int(e.dxf.get("halign", 0)), int(e.dxf.get("valign", 0))
                 text = e.plain_text()
                 height = e.dxf.get("height", 1.0)
                 p = e.dxf.insert
-                if (halign or e.dxf.get("valign", 0)) and e.dxf.hasattr("align_point"):
+                if (halign or valign) and e.dxf.hasattr("align_point"):
                     a = e.dxf.align_point
-                    # For aligned text the alignment point lies within the text's own extent of
-                    # the insertion point. A far-away value is corrupt (seen in converted DWGs):
-                    # keep the insertion point and report it.
+                    # The alignment point lies within the text's own extent of the insertion point.
+                    # A far-away value is corrupt (seen in converted DWGs): keep the insertion point
+                    # and report it.
                     limit = max(height, 1e-6) * (2 * max(len(text), 1) + 10)
-                    if math.dist((a.x, a.y), (p.x, p.y)) <= limit:
-                        p = a
-                    else:
+                    if math.dist((a.x, a.y), (p.x, p.y)) > limit:
                         self.report.inconsistent_text_alignment += 1
                         meta["alignment_point_ignored"] = [a.x, a.y]
+                    elif halign in (3, 5) and valign == 0:
+                        # ALIGNED / FIT: the text runs from the insertion point to the alignment point
+                        extra.update(halign=halign, valign=valign, align_point=[a.x, a.y])
+                    else:
+                        p = a  # centred / right / middle text: the alignment point is the anchor
+                        extra.update(halign=halign, valign=valign)
                 rotation = e.dxf.get("rotation", 0.0)
                 if t == "ATTRIB":
                     meta["attribute_tag"] = e.dxf.get("tag", "")
             self.add("text", layer, {"position": [p.x, p.y], "text": text, "height": height,
-                                     "rotation": rotation}, e, meta)
+                                     "rotation": rotation, **extra}, e, meta)
             self.count(bucket, t)
         elif t == "INSERT":
             if depth > 16:
@@ -296,19 +313,26 @@ def import_dxf(path: Path) -> tuple[Drawing, ImportReport]:
         # Fast path first; the slower recover loader is used only for damaged files.
         doc = ezdxf.readfile(str(path))
         auditor = doc.audit()
-    except IOError as exc:
+        recovered = ""
+    except FileNotFoundError as exc:
         raise CadImportError(f"Cannot read {path.name}: {exc}") from exc
-    except (ezdxf.DXFStructureError, UnicodeDecodeError):
+    except Exception as first:  # noqa: BLE001 - any parse failure: try the recover loader, then report
         try:
             doc, auditor = recover.readfile(str(path))
         except IOError as exc:
             raise CadImportError(f"Cannot read {path.name}: {exc}") from exc
-        except ezdxf.DXFStructureError as exc:
-            raise CadImportError(f"{path.name} is not a valid DXF file: {exc}") from exc
+        except Exception as exc:  # noqa: BLE001
+            raise CadImportError(f"{path.name} is not a valid DXF file: {type(exc).__name__}: {exc}") from exc
+        recovered = f"{type(first).__name__}: {first}".rstrip(": ")
     insunits = doc.header.get("$INSUNITS")
     suggested = unit_from_insunits(insunits)
     report = ImportReport(path.name, doc.dxfversion, insunits, suggested.value)
     report.audit_fixes = [str(f.message) for f in auditor.fixes]
+    if recovered:
+        report.warnings.append(f"The file is damaged ({recovered}); it was read in recovery mode. Compare the "
+                               "imported drawing with the source in CAD before using it.")
+        if len(doc.modelspace()) == 0:
+            raise CadImportError(f"{path.name} is damaged: recovery found no model-space entities.")
     if auditor.has_errors:
         report.warnings += [f"DXF error not fixed: {err.message}" for err in auditor.errors]
 
@@ -350,7 +374,8 @@ def import_dxf(path: Path) -> tuple[Drawing, ImportReport]:
     if report.paperspace_entities:
         report.warnings.append(f"{report.paperspace_entities} paper-space (layout) entities were not imported.")
     for t, n in report.skipped.items():
-        note = SKIPPED_TYPES_NOTE.get(t.split(" ")[0], "entity type not supported")
+        note = "damaged geometry (fewer than 2 vertices)" if "damaged" in t else \
+            SKIPPED_TYPES_NOTE.get(t.split(" ")[0], "entity type not supported")
         report.warnings.append(f"Skipped {n} × {t}: {note}.")
     for t, n in report.approximated.items():
         report.warnings.append(f"Approximated {n} × {t} as polylines (flagged on each entity).")
@@ -361,6 +386,10 @@ def import_dxf(path: Path) -> tuple[Drawing, ImportReport]:
     layer_counts = Counter(e.layer for e in drawing.entities.values())
     report.layers = {layer.name: layer_counts.get(layer.name, 0) for layer in drawing.layers}
     report.extents = drawing.extents(only_visible=False)
+    if report.duplicate_ids:
+        report.warnings.append(f"{report.duplicate_ids} entities carried an application id that was already used "
+                               "(copied in CAD after export). All were kept; copies got new ids "
+                               "(meta 'duplicate_of').")
     if suggested is LengthUnit.UNKNOWN:
         report.warnings.append("The DXF file does not declare drawing units ($INSUNITS). Units must be set "
                                "and verified before any measurement.")
@@ -410,6 +439,9 @@ def export_dxf(drawing: Drawing, path: Path, dxfversion: str = "R2018") -> list[
         d = e.data
         if e.kind == "line":
             ent = msp.add_line(d["p1"], d["p2"], dxfattribs=attribs)
+        elif e.kind == "polyline" and len(d["points"]) < 2:
+            warnings.append(f"Polyline {e.id} on layer {e.layer} has fewer than 2 vertices; not exported.")
+            continue
         elif e.kind == "polyline":
             pts = [(p[0], p[1], 0, 0, p[2] if len(p) > 2 else 0.0) for p in d["points"]]
             ent = msp.add_lwpolyline(pts, format="xyseb", close=bool(d.get("closed")), dxfattribs=attribs)
@@ -417,10 +449,21 @@ def export_dxf(drawing: Drawing, path: Path, dxfversion: str = "R2018") -> list[
             ent = msp.add_circle(d["center"], d["radius"], dxfattribs=attribs)
         elif e.kind == "arc":
             ent = msp.add_arc(d["center"], d["radius"], d["start_angle"], d["end_angle"], dxfattribs=attribs)
+        elif e.kind == "text" and (e.meta.get("multiline") or "\n" in d["text"]):
+            ent = msp.add_mtext(d["text"].replace("\n", "\\P"), dxfattribs={
+                **attribs, "char_height": d.get("height", 1.0), "rotation": d.get("rotation", 0.0),
+                "insert": d["position"], "attachment_point": d.get("attachment_point", 1)})
         elif e.kind == "text":
             ent = msp.add_text(d["text"], height=d.get("height", 1.0), rotation=d.get("rotation", 0.0),
                                dxfattribs=attribs)
-            ent.set_placement(d["position"])
+            if d.get("halign") or d.get("valign"):
+                ent.dxf.halign, ent.dxf.valign = d.get("halign", 0), d.get("valign", 0)
+                if "align_point" in d:  # ALIGNED / FIT
+                    ent.dxf.insert, ent.dxf.align_point = d["position"], d["align_point"]
+                else:
+                    ent.dxf.insert = ent.dxf.align_point = d["position"]
+            else:
+                ent.set_placement(d["position"])
         elif e.kind == "point":
             ent = msp.add_point(d["position"], dxfattribs=attribs)
         elif e.kind == "dimension":

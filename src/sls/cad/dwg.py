@@ -55,7 +55,8 @@ def find_oda(configured: str = "") -> Path | None:
 def find_libredwg(configured: str = "") -> Path | None:
     if configured:
         p = Path(configured)
-        return p if p.is_file() else None
+        ok_name = "dwg" in p.name.lower()  # dwg2dxf / dwgread, not an arbitrary file
+        return p if p.is_file() and ok_name and (sys.platform.startswith("win") or os.access(p, os.X_OK)) else None
     for name in _LIBREDWG_NAMES:
         bundled = _bundled_dir() / "libredwg" / name
         if bundled.is_file():
@@ -132,6 +133,8 @@ def _convert_libredwg(exe: Path, src: Path, dst: Path) -> list[str]:
                              timeout=1800, env=_libredwg_env(exe), check=False)
     except subprocess.TimeoutExpired as exc:
         raise DwgUnavailableError(f"LibreDWG timed out converting {src.name}.") from exc
+    except OSError as exc:
+        raise DwgUnavailableError(f"LibreDWG could not be started ({exe}): {exc}") from exc
     messages = [ln.strip() for ln in (res.stderr + res.stdout).splitlines() if ln.strip()]
     if res.returncode != 0 or not dst.is_file() or dst.stat().st_size == 0:
         tail = "; ".join(messages[-5:])
@@ -150,6 +153,8 @@ def import_dwg(path: Path, oda_path: str = "", libredwg_path: str = "") -> tuple
             messages = _convert_oda(conv.path, path, dxf_path)
         else:
             messages = _convert_libredwg(conv.path, path, dxf_path)
+        if not dxf_path.is_file() or dxf_path.stat().st_size == 0:
+            raise DwgUnavailableError(f"{conv.label} reported success but produced no DXF for {path.name}.")
         drawing, report = import_dxf(dxf_path)
     errors = [m for m in messages if m.upper().startswith("ERROR")]
     report.source_name = path.name
@@ -174,4 +179,6 @@ def export_dwg(drawing: Drawing, path: Path, oda_path: str = "", version: str = 
         dxf_path = Path(tmp) / (Path(path).stem + ".dxf")
         warnings = export_dxf(drawing, dxf_path)
         _convert_oda(oda, dxf_path, Path(path), version)
+    if not Path(path).is_file() or Path(path).stat().st_size == 0:
+        raise DwgUnavailableError(f"ODA File Converter reported success but wrote no DWG file at {path}.")
     return warnings

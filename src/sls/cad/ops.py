@@ -57,11 +57,14 @@ def fast_bbox(e: Entity) -> tuple[float, float, float, float]:
     if e.kind == "text":
         return bbox(e)
     pts = e.vertices()
+    if not pts:
+        raise ValueError(f"{e.kind} {e.id} has no vertices")
+    if e.kind == "polyline" and any(len(p) > 2 and p[2] for p in d["points"]):
+        # bulge arcs (up to a full turn) bow outside the vertices: use the exact flattened outline
+        return shapely_of(e).bounds
     xs = [p[0] for p in pts]
     ys = [p[1] for p in pts]
     pad = 0.0
-    if e.kind == "polyline" and any(len(p) > 2 and p[2] for p in d["points"]):
-        pad = max(max(xs) - min(xs), max(ys) - min(ys)) * 0.5  # bulge arcs can bow outside the vertices
     if e.kind == "dimension":
         pad = abs(d.get("offset", 0.0))
     return min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad
@@ -184,6 +187,8 @@ def offset(e: Entity, distance: float, side: Pt) -> Entity:
     if e.kind == "line":
         (x1, y1), (x2, y2) = d["p1"], d["p2"]
         L = math.hypot(x2 - x1, y2 - y1)
+        if L == 0:
+            raise ValueError("The line has zero length; it cannot be offset.")
         nx, ny = -(y2 - y1) / L, (x2 - x1) / L
         sgn = 1 if (side[0] - x1) * nx + (side[1] - y1) * ny >= 0 else -1
         n = e.clone(new_id=True)
@@ -204,6 +209,10 @@ def offset(e: Entity, distance: float, side: Pt) -> Entity:
         closed = bool(d.get("closed"))
         if closed:
             poly = Polygon(pts)
+            if not poly.is_valid:
+                from shapely.validation import explain_validity
+
+                raise ValueError(f"The outline is not a valid polygon ({explain_validity(poly)}); it cannot be offset.")
             grown = poly.buffer(distance, join_style="mitre", mitre_limit=10)
             shrunk = poly.buffer(-distance, join_style="mitre", mitre_limit=10)
             result = shrunk if poly.contains(Point(side)) else grown
@@ -276,6 +285,8 @@ def extend_line(e: Entity, pick: Pt, boundaries: Sequence[Entity], max_factor: f
         raise ValueError("Extend currently supports LINE entities only.")
     (x1, y1), (x2, y2) = e.data["p1"], e.data["p2"]
     L = math.hypot(x2 - x1, y2 - y1)
+    if L == 0:
+        raise ValueError("The line has zero length; it has no direction to extend.")
     ux, uy = (x2 - x1) / L, (y2 - y1) / L
     from_end = math.hypot(pick[0] - x2, pick[1] - y2) <= math.hypot(pick[0] - x1, pick[1] - y1)
     sx, sy, dx, dy = (x2, y2, ux, uy) if from_end else (x1, y1, -ux, -uy)

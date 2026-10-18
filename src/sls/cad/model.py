@@ -15,6 +15,7 @@ from typing import Any
 
 from ..core.units import DrawingUnits
 
+INVALID_LAYER_CHARS = '<>/\\":;?*|=`'
 ENTITY_KINDS = ("line", "polyline", "circle", "arc", "text", "point", "dimension")
 
 # Layer roles drive the calculation engine; they are assigned explicitly by the user.
@@ -215,9 +216,16 @@ class Drawing:
         key = name.casefold()
         return any(layer.name.casefold() == key for layer in self.layers)
 
-    def add_layer(self, layer: Layer, index: int | None = None) -> Layer:
-        if not layer.name.strip():
+    @staticmethod
+    def check_layer_name(name: str) -> None:
+        if not name.strip():
             raise ValueError("Layer name is required.")
+        bad = sorted(set(name) & set(INVALID_LAYER_CHARS))
+        if bad:
+            raise ValueError(f"Layer name '{name}' contains characters not allowed in DXF/DWG: {' '.join(bad)}")
+
+    def add_layer(self, layer: Layer, index: int | None = None) -> Layer:
+        self.check_layer_name(layer.name)
         if self.has_layer(layer.name):
             raise ValueError(f"Layer '{layer.name}' already exists.")
         if index is None:
@@ -234,21 +242,21 @@ class Drawing:
     def rename_layer(self, old: str, new: str) -> None:
         if old == "0":
             raise ValueError("Layer '0' cannot be renamed.")
-        if not new.strip():
-            raise ValueError("Layer name is required.")
+        self.check_layer_name(new)
         if self.has_layer(new) and new.casefold() != old.casefold():
             raise ValueError(f"Layer '{new}' already exists.")
+        key = old.casefold()  # layer names are case-insensitive (DXF)
         self.layer(old).name = new
         for e in self.entities.values():
-            if e.layer == old:
+            if e.layer.casefold() == key:
                 e.layer = new
-        if self.active_layer == old:
+        if self.active_layer.casefold() == key:
             self.active_layer = new
 
     def remove_layer(self, name: str) -> None:
         if name == "0":
             raise ValueError("Layer '0' cannot be deleted.")
-        if any(e.layer == name for e in self.entities.values()):
+        if any(e.layer.casefold() == name.casefold() for e in self.entities.values()):
             raise ValueError(f"Layer '{name}' still contains entities; move or erase them first.")
         self.layers.remove(self.layer(name))
         if self.active_layer == name:
@@ -285,6 +293,8 @@ class Drawing:
             raise ValueError(f"Unsupported entity kind: {entity.kind}")
         if not self.has_layer(entity.layer):
             self.add_layer(Layer(entity.layer))
+        else:
+            entity.layer = self.layer(entity.layer).name  # same spelling as the layer table (case)
         self.entities[entity.id] = entity
         return entity
 

@@ -360,7 +360,8 @@ class MoveTool(_SelectionFirstTool):
         ents = self.editable(self.canvas.selection) if not self.copy_mode else \
             [self.drawing.entities[i] for i in self.canvas.selection if i in self.drawing.entities]
         if self.copy_mode:
-            if not self.layer_ok():
+            ents = [e for e in ents if self.layer_ok(e.layer)]  # copies go to the source entity's layer
+            if not ents:
                 return
             copies = []
             for e in ents:
@@ -737,15 +738,15 @@ def parse_point(text: str, last: Pt | None) -> Pt | None:
             dist, ang = (float(v) for v in s.split("<", 1))
             dx, dy = dist * math.cos(math.radians(ang)), dist * math.sin(math.radians(ang))
             base = last if rel and last else (0.0, 0.0)
-            return base[0] + dx, base[1] + dy
-        if "," in s:
+            out = (base[0] + dx, base[1] + dy)
+        elif "," in s:
             x, y = (float(v) for v in s.split(",", 1))
-            if rel and last:
-                return last[0] + x, last[1] + y
-            return x, y
+            out = (last[0] + x, last[1] + y) if rel and last else (x, y)
+        else:
+            return None
     except ValueError:
         return None
-    return None
+    return out if all(math.isfinite(v) for v in out) else None  # nan/inf are never coordinates
 
 
 def screen_point(canvas, pt: Pt) -> QPointF:  # type: ignore[no-untyped-def]
