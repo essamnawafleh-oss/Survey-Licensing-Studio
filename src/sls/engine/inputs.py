@@ -58,6 +58,8 @@ class CalculationInputs:
     setback_method: str = "distance_zone"
     # Reviewer approval of the offset construction (setback_approvals); matched by fingerprint.
     setback_approval: dict[str, Any] | None = None
+    # Dataset versions this calculation used (rules, parcel register, zoning, roads); see datasets.py.
+    datasets: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -74,8 +76,9 @@ class CalculationInputs:
         d = self.to_dict()
         if d.get("setback_method") == "distance_zone":
             del d["setback_method"]  # keeps the hashes of snapshots stored before the field existed
-        if d.get("setback_approval") is None:
-            d.pop("setback_approval", None)  # same reason
+        for key in ("setback_approval", "datasets"):
+            if d.get(key) is None:
+                d.pop(key, None)  # same reason
         return json.dumps(d, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
     def input_hash(self) -> str:

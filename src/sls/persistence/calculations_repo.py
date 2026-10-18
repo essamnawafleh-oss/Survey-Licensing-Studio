@@ -1,6 +1,7 @@
 """Stored calculations: immutable revisions with full input snapshots."""
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -80,7 +81,11 @@ class CalculationRepository:
     def reproduce(self, calc_id: str) -> tuple[bool, str]:
         """Re-run a stored calculation from its input snapshot and compare result hashes."""
         rec = self.get(calc_id)
-        if rec.inputs.input_hash() != rec.input_hash:
+        # Verify the stored snapshot text itself: it is exactly what was hashed when the calculation was
+        # made. Re-serialising through the current CalculationInputs would add fields introduced later
+        # (rule_override, zoning, ...) and make every older snapshot look tampered with.
+        stored = self.db.query_one("SELECT inputs_json FROM calculations WHERE id=?", (calc_id,))["inputs_json"]
+        if hashlib.sha256(stored.encode("utf-8")).hexdigest() != rec.input_hash:
             return False, "stored inputs do not match their recorded hash"
         new_hash = result_hash(run_calculation(rec.inputs))
         return new_hash == rec.result_hash, new_hash

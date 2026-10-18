@@ -15,8 +15,7 @@ from shapely.geometry import Point, box
 from shapely.geometry.base import BaseGeometry
 
 from ..core.errors import ValidationError
-from ..gis.shapefile_layer import FieldMapping, attrs_json, components, inspect, iter_records, summarize
-from .db import new_id, now_iso
+from ..gis.shapefile_layer import FieldMapping
 
 if TYPE_CHECKING:
     from .users import User
@@ -74,57 +73,14 @@ class CadastreRepository:
     # -- import ------------------------------------------------------------------------
 
     def import_layer(self, user: "User", shp: Path, mapping: FieldMapping, name: str = "",
-                     progress=None) -> CadastreLayer:  # type: ignore[no-untyped-def]
-        user.require("import_cadastre")
-        info = inspect(shp)
-        if info.shape_type not in ("POLYGON", "POLYGONZ", "POLYGONM"):
-            raise ValidationError(f"Expected a polygon layer, found {info.shape_type}.")
-        unknown = [f for f in mapping.columns.values() if f not in info.fields]
-        if unknown:
-            raise ValidationError(f"Mapped fields do not exist in the layer: {', '.join(unknown)}")
-        if not mapping.columns.get("parcel") and not mapping.columns.get("key"):
-            raise ValidationError("Map at least the parcel number or the parcel key field.")
-        name = (name or Path(shp).stem).strip()
-        records = list(iter_records(shp, info.encoding))
-        summary = summarize(records, mapping)
-        summary["crs_code"] = info.crs_code
-        summary["missing_components"] = info.missing_components
-        with self.db.transaction():
-            version = int(self.db.query_one("SELECT COALESCE(MAX(version),0) FROM cadastre_layers WHERE name=?",
-                                            (name,))[0]) + 1
-            lid = new_id()
-            sources = []
-            for ext, path in sorted(components(shp).items()):
-                stored = self.ws.store.import_file(path, None, "cadastre")
-                sources.append({"file": path.name, "stored_path": stored.relative_path, "sha256": stored.sha256,
-                                "size_bytes": stored.size_bytes})
-            self.db.execute("UPDATE cadastre_layers SET active=0")
-            self.db.execute(
-                "INSERT INTO cadastre_layers(id,name,version,crs_code,crs_wkt,encoding,mapping_json,source_json,"
-                "summary_json,record_count,imported_at,imported_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                (lid, name, version, info.crs_code, info.crs_wkt, info.encoding,
-                 json.dumps(mapping.to_dict(), ensure_ascii=False), json.dumps(sources, ensure_ascii=False),
-                 json.dumps(summary, ensure_ascii=False, default=str), len(records), now_iso(), user.username))
-            rows = []
-            for n, r in enumerate(records):
-                g = r.geometry
-                b = g.bounds if g is not None and not g.is_empty else (None, None, None, None)
-                rows.append((lid, r.fid, mapping.get(r.attrs, "key"), mapping.get(r.attrs, "village"),
-                             mapping.get(r.attrs, "basin"), mapping.get(r.attrs, "sector"),
-                             mapping.get(r.attrs, "sheet"), mapping.get(r.attrs, "parcel"),
-                             mapping.get(r.attrs, "globalid"), attrs_json(r.attrs),
-                             g.wkb if g is not None else None, float(g.area) if g is not None else None, r.parts,
-                             *b, int(r.valid), r.issue))
-                if progress and n % 2000 == 0:
-                    progress(n, len(records))
-            self.db.conn.executemany(
-                "INSERT INTO cadastre_parcels(layer_id,fid,dls_key,village,basin,sector,sheet,parcel_no,globalid,"
-                "attrs_json,wkb,area_m2,parts,minx,miny,maxx,maxy,valid,issue) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
-            self.ws.audit.record(user, "import_cadastre", "cadastre_layer", lid, None, name=name, version=version,
-                                 records=len(records), crs=info.crs_code,
-                                 sources=[(s["file"], s["sha256"]) for s in sources])
-        return self.layer(lid)
+                     progress=None, declared_crs: str = "") -> CadastreLayer:  # type: ignore[no-untyped-def]
+        """Stage and immediately activate a parcel layer (see ``DatasetManager`` for the staged workflow)."""
+        from .datasets import ImportControl
+
+        control = ImportControl(progress=(lambda _stage, n, total: progress(n, total)) if progress else None)
+        staged = self.ws.datasets.stage("cadastre", user, shp, mapping, name, declared_crs, control)
+        self.ws.datasets.activate("cadastre", user, staged.id, "imported and activated in one step")
+        return self.layer(staged.id)
 
     # -- queries -------------------------------------------------------------------------
 
@@ -137,11 +93,12 @@ class CadastreRepository:
                              r["record_count"], r["imported_at"], r["imported_by"], json.loads(r["source_json"]))
 
     def active_layer(self) -> CadastreLayer | None:
-        r = self.db.query_one("SELECT id FROM cadastre_layers WHERE active=1 ORDER BY imported_at DESC LIMIT 1")
+        r = self.db.query_one("SELECT id FROM cadastre_layers WHERE active=1 ORDER BY activated_at DESC LIMIT 1")
         return self.layer(r["id"]) if r else None
 
     def layers(self) -> list[CadastreLayer]:
-        return [self.layer(r["id"]) for r in self.db.query("SELECT id FROM cadastre_layers ORDER BY imported_at DESC")]
+        return [self.layer(r["id"]) for r in self.db.query("SELECT id FROM cadastre_layers WHERE status<>'discarded' "
+                                                           "ORDER BY imported_at DESC")]
 
     def _parcel(self, r) -> CadastreParcel:  # type: ignore[no-untyped-def]
         g = shapely_wkb.loads(r["wkb"]) if r["wkb"] is not None else None

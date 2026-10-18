@@ -118,6 +118,7 @@ class MainWindow(QMainWindow):
         m_file.addAction(self._act("act.case_fields", self.manage_fields))
         m_file.addAction(self._act("act.cadastre_import", self.import_cadastre))
         m_file.addAction(self._act("act.zoning_import", self.import_zoning))
+        m_file.addAction(self._act("act.gis_data", self.gis_data))
         m_file.addSeparator()
         m_file.addAction(self._act("act.exit", self.close, "Ctrl+Q"))
 
@@ -147,7 +148,7 @@ class MainWindow(QMainWindow):
                           ("act.setback_preview", self.setback_preview),
                           ("act.calculate", self.calculate), ("act.results", self.show_results), ("act.licenses", self.open_licenses),
                           ("act.media", self.open_media), ("act.report", self.open_report),
-                          ("act.find_parcel", self.find_parcel),
+                          ("act.find_parcel", self.find_parcel), ("act.insert_roads", self.insert_roads),
                           ("act.regulatory_check", self.regulatory_check),
                           ("act.regulatory_transform", self.regulatory_transform)):
             m_case.addAction(self._act(key, slot, needs_case=key != "act.rules"))
@@ -426,6 +427,51 @@ class MainWindow(QMainWindow):
         thread.start()
         while thread.is_alive():
             QApplication.processEvents(QEventLoop.AllEvents, 50)
+            thread.join(0.05)
+        dlg.close()
+        if "error" in result:
+            raise result["error"]  # type: ignore[misc]
+        return result.get("value")
+
+    def run_task(self, label: str, fn):  # type: ignore[no-untyped-def]
+        """Like ``run_busy`` but cancellable with progress: ``fn(control: ImportControl)``.
+
+        Cancelling sets a flag that the task checks between steps; the task then raises
+        ``ImportCancelled`` and rolls back, so no partial data is kept.
+        """
+        import threading
+
+        from PySide6.QtCore import QEventLoop
+        from PySide6.QtWidgets import QProgressDialog
+
+        from ..persistence.datasets import ImportControl
+
+        cancelled = threading.Event()
+        state: dict[str, object] = {"stage": "", "n": 0, "total": 0}
+        result: dict[str, object] = {}
+
+        def progress(stage: str, n: int, total: int) -> None:
+            state.update(stage=stage, n=n, total=total)
+
+        def work() -> None:
+            try:
+                result["value"] = fn(ImportControl(progress=progress, cancelled=cancelled.is_set))
+            except BaseException as exc:  # noqa: BLE001 - re-raised in the UI thread below
+                result["error"] = exc
+
+        dlg = QProgressDialog(label, tr("common.cancel"), 0, 0, self)
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setMinimumDuration(300)
+        dlg.canceled.connect(cancelled.set)
+        thread = threading.Thread(target=work, daemon=True)
+        thread.start()
+        while thread.is_alive():
+            QApplication.processEvents(QEventLoop.AllEvents, 50)
+            total = int(state["total"] or 0)  # type: ignore[arg-type]
+            if total:
+                dlg.setMaximum(total)
+                dlg.setValue(min(int(state["n"]), total))  # type: ignore[arg-type]
+                dlg.setLabelText(f"{label}\n{tr('gis.stage.' + str(state['stage']))}")
             thread.join(0.05)
         dlg.close()
         if "error" in result:
@@ -783,14 +829,52 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ parcel register
 
     def import_cadastre(self) -> None:
-        from .dialogs.cadastre_dialogs import CadastreImportDialog
+        from .dialogs.gis_data_dialogs import DatasetImportDialog
 
-        CadastreImportDialog(self.ws, self.run_busy, self).exec()
+        DatasetImportDialog(self.ws, self.run_busy, self, "cadastre", self.run_task).exec()
 
     def import_zoning(self) -> None:
-        from .dialogs.cadastre_dialogs import CadastreImportDialog
+        from .dialogs.gis_data_dialogs import DatasetImportDialog
 
-        CadastreImportDialog(self.ws, self.run_busy, self, kind="zoning").exec()
+        DatasetImportDialog(self.ws, self.run_busy, self, "zoning", self.run_task).exec()
+
+    def gis_data(self) -> None:
+        from .dialogs.gis_data_dialogs import GisDataDialog
+
+        GisDataDialog(self.ws, self.run_busy, self, self.run_task).exec()
+
+    def insert_roads(self) -> None:
+        """Insert active road-layer features around the case boundary (or the view) as reference geometry."""
+        if self.canvas.drawing is None:
+            self.cmd.message(tr("app.no_drawing_hint"), "warn")
+            return
+        d = self.canvas.drawing
+        parcel = self.ws.drawings.parcel(self.case_id)
+        b = d.entities.get(parcel.boundary_entity_id) if parcel.boundary_entity_id else None
+        if b is not None:
+            xs, ys = [p[0] for p in b.vertices()], [p[1] for p in b.vertices()]
+            margin = 50.0
+            win = (min(xs) - margin, min(ys) - margin, max(xs) + margin, max(ys) + margin)
+        else:
+            win = self.canvas.view_extents()
+        try:
+            entities = self.service.road_entities(self.case_id, *win)
+        except Exception as exc:  # noqa: BLE001
+            show_error(self, exc)
+            return
+        from ..cad.commands import AddEntities, DeleteEntities
+        from ..services.case_service import ROAD_LAYERS
+
+        for name, props in ROAD_LAYERS.items():
+            d.ensure_layer(name, **props)
+        old = [e.id for e in d.entities.values() if e.meta.get("source") == "gis_roads"]
+        if old:
+            self.stack.push(DeleteEntities(old, "replace GIS roads"))
+        if entities:
+            self.stack.push(AddEntities(entities, "GIS roads"))
+        self.canvas.edited()
+        self.layers.refresh()
+        self.cmd.message(tr("gis.roads_inserted", n=len(entities)), "ok" if entities else "warn")
 
     def find_parcel(self) -> None:
         if self.ws.cadastre.active_layer() is None:

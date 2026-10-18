@@ -423,6 +423,69 @@ CREATE TABLE setback_approvals (
 CREATE INDEX ix_setback_approvals_case ON setback_approvals(case_id, approved_at);
 """,
     ),
+    (
+        6,
+        "GIS dataset staging/activation/rollback columns; road reference layers",
+        """
+ALTER TABLE cadastre_layers ADD COLUMN status TEXT NOT NULL DEFAULT 'inactive';
+ALTER TABLE cadastre_layers ADD COLUMN activated_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE cadastre_layers ADD COLUMN activated_by TEXT NOT NULL DEFAULT '';
+ALTER TABLE cadastre_layers ADD COLUMN validation_json TEXT NOT NULL DEFAULT '{}';
+UPDATE cadastre_layers SET status='active', activated_at=imported_at, activated_by=imported_by WHERE active=1;
+UPDATE cadastre_layers SET activated_at=imported_at, activated_by=imported_by WHERE active=0;
+
+ALTER TABLE zoning_layers ADD COLUMN crs_wkt TEXT NOT NULL DEFAULT '';
+ALTER TABLE zoning_layers ADD COLUMN status TEXT NOT NULL DEFAULT 'inactive';
+ALTER TABLE zoning_layers ADD COLUMN activated_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE zoning_layers ADD COLUMN activated_by TEXT NOT NULL DEFAULT '';
+ALTER TABLE zoning_layers ADD COLUMN validation_json TEXT NOT NULL DEFAULT '{}';
+UPDATE zoning_layers SET status='active', activated_at=imported_at, activated_by=imported_by WHERE active=1;
+UPDATE zoning_layers SET activated_at=imported_at, activated_by=imported_by WHERE active=0;
+
+CREATE TABLE road_layers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    crs_code TEXT NOT NULL DEFAULT '',
+    crs_wkt TEXT NOT NULL DEFAULT '',
+    encoding TEXT NOT NULL,
+    mapping_json TEXT NOT NULL,
+    source_json TEXT NOT NULL,
+    summary_json TEXT NOT NULL,
+    record_count INTEGER NOT NULL,
+    imported_at TEXT NOT NULL,
+    imported_by TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'staged',
+    activated_at TEXT NOT NULL DEFAULT '',
+    activated_by TEXT NOT NULL DEFAULT '',
+    validation_json TEXT NOT NULL DEFAULT '{}',
+    UNIQUE (name, version)
+);
+
+CREATE TABLE road_features (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    layer_id TEXT NOT NULL REFERENCES road_layers(id) ON DELETE CASCADE,
+    fid INTEGER NOT NULL,
+    road_id TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL DEFAULT '',
+    road_class TEXT NOT NULL DEFAULT '',
+    width TEXT NOT NULL DEFAULT '',
+    attrs_json TEXT NOT NULL,
+    wkb BLOB,
+    geom_type TEXT NOT NULL DEFAULT '',
+    length_m REAL,
+    area_m2 REAL,
+    parts INTEGER NOT NULL DEFAULT 0,
+    minx REAL, miny REAL, maxx REAL, maxy REAL,
+    valid INTEGER NOT NULL,
+    issue TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX ix_road_bbox ON road_features(layer_id, minx, maxx, miny, maxy);
+CREATE INDEX ix_road_id ON road_features(layer_id, road_id);
+CREATE INDEX ix_road_name ON road_features(layer_id, name);
+""",
+    ),
 ]
 
 # Default configurable case fields, inserted once by migration seeding (editable later).

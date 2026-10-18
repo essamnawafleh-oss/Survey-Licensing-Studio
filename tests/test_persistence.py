@@ -281,3 +281,27 @@ def test_existing_v1_database_is_migrated_with_backup(tmp_path, monkeypatch):
     assert any("pre-migration-v1" in p.name for p in list_backups(ws.backup_dir))
     assert ws.db.query_one("SELECT name FROM rule_sets")["name"] == "old"
     ws.close()
+
+
+def test_snapshot_from_before_later_input_fields_still_reproduces(full_case):
+    """Regression: snapshots stored before rule_override/zoning/setback fields existed failed reproduce()."""
+    import hashlib
+    import json
+
+    ws, calc = full_case["ws"], full_case["calc"]
+    old = json.loads(ws.db.query_one("SELECT inputs_json FROM calculations WHERE id=?", (calc.id,))["inputs_json"])
+    for key in ("rule_override", "zoning", "setback_method", "setback_approval", "datasets"):
+        old.pop(key, None)
+    text = json.dumps(old, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    from sls.engine.inputs import CalculationInputs
+    from sls.engine.run import result_hash, run_calculation
+
+    results = run_calculation(CalculationInputs.from_dict(old))
+    with ws.db.transaction():
+        ws.db.execute("UPDATE calculations SET inputs_json=?, input_hash=?, result_hash=? WHERE id=?",
+                      (text, hashlib.sha256(text.encode()).hexdigest(), result_hash(results), calc.id))
+    ok, detail = ws.calculations.reproduce(calc.id)
+    assert ok, detail
+    with ws.db.transaction():  # tampering is still detected
+        ws.db.execute("UPDATE calculations SET inputs_json=? WHERE id=?", (text.replace("SYN-B", "SYN-A"), calc.id))
+    assert ws.calculations.reproduce(calc.id) == (False, "stored inputs do not match their recorded hash")

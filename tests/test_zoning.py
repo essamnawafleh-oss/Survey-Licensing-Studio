@@ -14,7 +14,7 @@ from test_cadastre import (  # noqa: F401  (fixture re-export)
     sq,
 )
 
-from sls.core.errors import PermissionDeniedError
+from sls.core.errors import PermissionDeniedError, ValidationError
 from sls.core.units import CrsKind, DrawingUnits, LengthUnit
 from sls.engine import run as engine_run
 from sls.gis.shapefile_layer import inspect, suggest_mapping, suggest_zoning_mapping
@@ -136,15 +136,21 @@ def test_zoning_in_calculation_and_report(full_case, tmp_path):
     from sls.reporting.report import ReportOptions
     from sls.services.report_service import ReportService
 
+    from sls.core.units import CrsKind, DrawingUnits, LengthUnit
+
     ws, case = full_case["ws"], full_case["case"]
-    path = tmp_path / "LOCAL_ZONES.shp"   # no .prj: assumed to be in the case grid
+    case.units = DrawingUnits(LengthUnit.METER, True, "ESRI:102158", CrsKind.PROJECTED, "admin")
+    ws.cases.save(ADMIN, case)
+    path = tmp_path / "LOCAL_ZONES.shp"   # no .prj: the coordinate system must be declared explicitly
     w = shapefile.Writer(str(path), shapeType=shapefile.POLYGON, encoding="utf-8")
     w.field("ZONE_ID", "C", 10)
     w.field("الاست", "C", 40)
     w.poly([sq(OX - 1000, OY - 1000, 3000, 3000)])
     w.record("SYN-A", "سكن تجريبي أ")
     w.close()
-    ws.zoning.import_layer(ADMIN, path, suggest_zoning_mapping(inspect(path).fields))
+    with pytest.raises(ValidationError, match="no .prj"):
+        ws.zoning.import_layer(ADMIN, path, suggest_zoning_mapping(inspect(path).fields))
+    ws.zoning.import_layer(ADMIN, path, suggest_zoning_mapping(inspect(path).fields), declared_crs="ESRI:102158")
     calc = CaseService(ws).run_calculation(case.id)
     assert calc.results["zoning"]["zones"][0]["zone_id"] == "SYN-A"
     assert "zoning_mismatch" in {i["code"] for i in calc.results["issues"]}  # case uses SYN-B
@@ -179,5 +185,9 @@ def test_zoning_import_dialog(qtbot, qapp, workspace, zoning_shp, sample_xlsx, m
     dlg._check()
     text = dlg.summary.text()
     assert "71" in text and dlg.import_btn.isEnabled()   # zone 71 is not in the rule table
+    staged = []
+    dlg.review = lambda v: staged.append(v)  # the comparison dialog is modal; activation is explicit
     dlg._import()
+    assert staged[0].status == "staged" and workspace.zoning.active_layer() is None  # nothing activated yet
+    workspace.datasets.activate("zoning", workspace.user, staged[0].id, "test")
     assert workspace.zoning.active_layer()["record_count"] == 5

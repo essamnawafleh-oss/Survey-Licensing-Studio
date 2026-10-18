@@ -30,6 +30,11 @@ CADASTRE_LAYERS = {
     "CADASTRE_LABELS": {"role": "annotation", "color": "#B0BEC5"},
 }
 
+ROAD_LAYERS = {
+    # role "road": may drive front-edge *suggestions* (always confirmed); never a parcel boundary
+    "GIS_ROADS": {"role": "road", "color": "#FFB74D"},
+}
+
 DERIVED_LAYERS = {
     "setback": "SETBACK_BOUNDARY",
     "violation": "SETBACK_VIOLATIONS",
@@ -210,6 +215,58 @@ class CaseService:
         ov = self.ws.zoning.overlay(poly, layer["id"])
         return {"layer": layer["label"], "layer_id": layer["id"], **ov.to_dict()} if ov else None
 
+    def _dataset_pins(self, drawing: Drawing, boundary: Entity | None, inputs: CalculationInputs) -> dict[str, Any]:
+        """The dataset versions a calculation actually used (unused layers are not recorded)."""
+        pins: dict[str, Any] = {}
+        if inputs.rule_version_id:
+            v = self.ws.rules.get_version(inputs.rule_version_id)
+            pins["rules"] = {"rule_version_id": v.id, "label": f"{v.rule_set_name} v{v.version}",
+                             "workbook_sha256": v.workbook_sha256, "verified": v.verified}
+        if boundary is not None and boundary.meta.get("source") == "cadastre":
+            pins["cadastre"] = {"layer_id": boundary.meta.get("cadastre_layer_id"),
+                                "label": boundary.meta.get("cadastre_layer"), "dls_key": boundary.meta.get("dls_key"),
+                                "globalid": boundary.meta.get("globalid")}
+        if inputs.zoning:
+            pins["zoning"] = {"layer_id": inputs.zoning.get("layer_id"), "label": inputs.zoning.get("layer")}
+        roads = sorted({(e.meta.get("roads_layer_id"), e.meta.get("roads_layer")) for e in drawing.entities.values()
+                        if e.meta.get("source") == "gis_roads"}, key=str)
+        if roads:
+            pins["roads"] = [{"layer_id": i, "label": label} for i, label in roads]
+        return pins
+
+    def road_entities(self, case_id: str, x0: float, y0: float, x1: float, y1: float) -> list[Entity]:
+        """Road reference features in a window, as drawing entities on GIS_ROADS (attributes in meta).
+
+        Geometry is copied unchanged. Roads are reference data: they may support front-edge
+        suggestions (always confirmed by the user) but are never used as a parcel boundary.
+        """
+        from ..core.crs import same_grid
+
+        layer = self.ws.datasets.active("roads")
+        if layer is None:
+            raise ValidationError("No road layer is active. Import one in File → GIS data management.")
+        case = self.ws.cases.get(case_id)
+        if layer.crs_code and case.units.crs_id and not same_grid(layer.crs_code, case.units.crs_id):
+            raise ValidationError(f"The road layer is in {layer.crs_code} but the case uses {case.units.crs_id}; the "
+                                  "coordinates are not compatible (nothing is transformed).")
+        out: list[Entity] = []
+        for f in self.ws.roads.in_window(x0, y0, x1, y1, layer.id):
+            meta = {"source": "gis_roads", "roads_layer": layer.label, "roads_layer_id": layer.id,
+                    "road_feature_id": f.id, "road_id": f.road_id, "name": f.name, "road_class": f.road_class,
+                    "width": f.width, "valid": f.valid, "issue": f.issue, "attributes": f.attrs}
+            g = f.geometry
+            parts = [g] if g.geom_type in ("LineString", "Polygon") else list(getattr(g, "geoms", []))
+            for part in parts:
+                if part.geom_type == "LineString":
+                    out.append(Entity("polyline", "GIS_ROADS", {"points": [[x, y] for x, y in part.coords],
+                                                               "closed": False}, meta=dict(meta)))
+                else:
+                    for ring in [part.exterior, *part.interiors]:
+                        out.append(Entity("polyline", "GIS_ROADS", {"points": [[x, y] for x, y in
+                                                                              list(ring.coords)[:-1]],
+                                                                   "closed": True}, meta=dict(meta)))
+        return out
+
     # -- cadastral parcel register -------------------------------------------------------------
 
     def cadastre_entities(self, case_id: str, parcel_ids: list[int], neighbours_margin: float = 30.0
@@ -340,6 +397,7 @@ class CaseService:
                            else None),
         )
         inputs.zoning = self.zoning_for_boundary(loaded.drawing, parcel.boundary_entity_id, case.units.crs_id)
+        inputs.datasets = self._dataset_pins(loaded.drawing, boundary, inputs) or None
         inputs.setback_method = self.ws.settings.setback_method
         if inputs.setback_method == "offset_corner":
             inputs.setback_approval = self.ws.setback_approvals.for_inputs(case_id)

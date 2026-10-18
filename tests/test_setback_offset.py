@@ -182,6 +182,7 @@ def test_snapshots_from_before_the_method_field_keep_their_hash(sample_dxf):
     d = inputs.to_dict()
     del d["setback_method"]  # a snapshot stored before the setback fields existed
     del d["setback_approval"]
+    del d["datasets"]
     old_hash = hashlib.sha256(json.dumps(d, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
                               .encode("utf-8")).hexdigest()
     restored = CalculationInputs.from_dict(d)

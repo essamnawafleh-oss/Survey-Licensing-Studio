@@ -30,6 +30,7 @@ PERMISSIONS: dict[str, tuple[str, ...]] = {
     "import_cadastre": ("reviewer", "admin"),
     "import_zoning": ("reviewer", "admin"),
     "approve_setback": ("reviewer", "admin"),
+    "import_roads": ("reviewer", "admin"),
     "verify_units": ROLES,
     "verify_boundary": ROLES,
     "verify_license": ("reviewer", "admin"),

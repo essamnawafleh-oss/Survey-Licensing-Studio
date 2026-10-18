@@ -94,6 +94,8 @@ def run_calculation(inputs: CalculationInputs) -> dict[str, Any]:
               [f"verified by {units.verified_by or 'user'}"])
     _crs_checks(inputs, all_pts, factor, issues, trace, out)
     _zoning_checks(inputs, issues, trace, out)
+    if inputs.datasets:
+        out["datasets"] = inputs.datasets  # only when recorded, so older results reproduce unchanged
     if any(s.approximated for s in inputs.footprints + inputs.linear) or (inputs.parcel and inputs.parcel.approximated):
         issues.append({"severity": "warning", "code": "curves_approximated",
                        "message": "Curved geometry (arcs, circles, splines) was sampled at 256 segments per full "

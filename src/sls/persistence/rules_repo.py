@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from ..core.errors import RuleImportError, ValidationError
 from ..rules.excel_rules import ColumnMapping, LandUseRule, RuleValidation, read_sheet, select_rule, validate
@@ -109,6 +109,27 @@ class RuleRepository:
                             name_ar=r["name_ar"], name_en=r["name_en"], max_coverage_pct=r["max_coverage_pct"],
                             max_floors=r["max_floors"], max_far=r["max_far"], notes=r["notes"], status=r["status"],
                             **json.loads(r["raw_json"])) for r in rows]
+
+    def compare_versions(self, old_id: str, new_id: str) -> dict[str, Any]:
+        """Codes added/removed and rules whose source text or parsed values changed (both kept unchanged)."""
+        def key(r: LandUseRule) -> dict[str, Any]:
+            d = r.to_dict()
+            for k in ("source_row", "warnings", "source"):
+                d.pop(k, None)
+            return d
+
+        a = {r.code: key(r) for r in self.rules(old_id)}
+        b = {r.code: key(r) for r in self.rules(new_id)}
+        changed = []
+        for code in sorted(set(a) & set(b), key=lambda c: (len(c), c)):
+            diff = {k: {"old": a[code].get(k), "new": b[code].get(k)} for k in sorted(set(a[code]) | set(b[code]))
+                    if a[code].get(k) != b[code].get(k)}
+            if diff:
+                changed.append({"code": code, "changes": diff})
+        order = lambda c: (len(c), c)  # noqa: E731
+        return {"old": old_id, "new": new_id, "rows": {"old": len(a), "new": len(b)},
+                "added": sorted(set(b) - set(a), key=order), "removed": sorted(set(a) - set(b), key=order),
+                "changed": changed, "unchanged": len(set(a) & set(b)) - len(changed)}
 
     def rule(self, version_id: str, code: str) -> LandUseRule:
         return select_rule(self.rules(version_id), code)

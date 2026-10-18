@@ -104,6 +104,12 @@ class CadCanvas(QWidget):
     def to_world(self, p: QPointF) -> tuple[float, float]:
         return (self.cx + (p.x() - self.width() / 2) / self.scale, self.cy - (p.y() - self.height() / 2) / self.scale)
 
+    def view_extents(self) -> tuple[float, float, float, float]:
+        """World window currently shown (x0, y0, x1, y1)."""
+        x0, y1 = self.to_world(QPointF(0, 0))
+        x1, y0 = self.to_world(QPointF(self.width(), self.height()))
+        return (x0, y0, x1, y1)
+
     def _local_transform(self) -> QTransform:
         s = self.scale
         t = QTransform()

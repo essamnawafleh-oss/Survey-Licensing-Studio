@@ -168,7 +168,12 @@ class _Capture(logging.Handler):
         self.messages.append(record.getMessage())
 
 
-def iter_records(shp: Path, encoding: str) -> Iterator[ParcelRecord]:
+POLYGON_TYPES = ("POLYGON", "POLYGONZ", "POLYGONM")
+LINE_TYPES = ("POLYLINE", "POLYLINEZ", "POLYLINEM")
+
+
+def iter_records(shp: Path, encoding: str, shape_types: Sequence[str] = POLYGON_TYPES) -> Iterator[ParcelRecord]:
+    """Every record of the layer, in file order, with its geometry problems (never repaired)."""
     import shapefile
 
     capture = _Capture()
@@ -177,16 +182,18 @@ def iter_records(shp: Path, encoding: str) -> Iterator[ParcelRecord]:
     propagate = logger.propagate
     logger.propagate = False  # geometry warnings are attached to their record instead of printed
     try:
-        yield from _iter_records(shapefile, shp, encoding, capture)
+        yield from _iter_records(shapefile, shp, encoding, capture, tuple(shape_types))
     finally:
         logger.removeHandler(capture)
         logger.propagate = propagate
 
 
-def _iter_records(shapefile, shp: Path, encoding: str, capture: "_Capture") -> Iterator[ParcelRecord]:  # type: ignore[no-untyped-def]
+def _iter_records(shapefile, shp: Path, encoding: str, capture: "_Capture",  # type: ignore[no-untyped-def]
+                  shape_types: tuple[str, ...]) -> Iterator[ParcelRecord]:
     with shapefile.Reader(str(components(shp)[".shp"]), encoding=encoding) as r:
-        if r.shapeType not in (shapefile.POLYGON, shapefile.POLYGONZ, shapefile.POLYGONM):
-            raise ShapefileError(f"Expected a polygon layer, found {r.shapeTypeName}.")
+        if r.shapeTypeName not in shape_types:
+            raise ShapefileError(f"Expected a {'/'.join(sorted({t.rstrip('ZM').lower() for t in shape_types}))} "
+                                 f"layer, found {r.shapeTypeName}.")
         for i, sr in enumerate(r.iterShapeRecords()):
             attrs = sr.record.as_dict()
             s = sr.shape
@@ -198,6 +205,13 @@ def _iter_records(shapefile, shp: Path, encoding: str, capture: "_Capture") -> I
             n = len(getattr(geom, "geoms", [geom]))
             issue = "; ".join(m.split(":")[0] for m in capture.messages)
             valid = geom.is_valid
+            if geom.geom_type in ("LineString", "MultiLineString"):
+                if not valid:
+                    issue = "; ".join(x for x in (issue, f"invalid line: {explain_validity(geom)}") if x)
+                elif geom.length <= 1e-6:
+                    valid, issue = False, "; ".join(x for x in (issue, "zero length") if x)
+                yield ParcelRecord(i, attrs, geom, n, valid, issue)
+                continue
             if not valid:
                 issue = "; ".join(x for x in (issue, f"invalid polygon: {explain_validity(geom)}") if x)
             elif geom.area <= 1e-6:

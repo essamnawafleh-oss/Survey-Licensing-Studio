@@ -15,9 +15,7 @@ from shapely import wkb as shapely_wkb
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
-from ..core.errors import ValidationError
-from ..gis.shapefile_layer import FieldMapping, components, inspect, iter_records
-from .db import new_id, now_iso
+from ..gis.shapefile_layer import FieldMapping
 
 if TYPE_CHECKING:
     from .users import User
@@ -67,57 +65,18 @@ class ZoningRepository:
         self.ws = ws
         self.db = ws.db
 
-    def import_layer(self, user: "User", shp: Path, mapping: FieldMapping, name: str = "") -> dict[str, Any]:
-        user.require("import_zoning")
-        info = inspect(shp)
-        if not mapping.columns.get("zone_id"):
-            raise ValidationError("Map the zone code field (e.g. ZONE_ID).")
-        unknown = [f for f in mapping.columns.values() if f not in info.fields]
-        if unknown:
-            raise ValidationError(f"Mapped fields do not exist in the layer: {', '.join(unknown)}")
-        name = (name or Path(shp).stem).strip()
-        rows, codes, invalid, blank = [], {}, 0, 0
-        records = list(iter_records(shp, info.encoding))
-        zid_field, name_field = mapping.columns["zone_id"], mapping.columns.get("zone_name", "")
-        for r in records:
-            g = r.geometry
-            code = _code(r.attrs.get(zid_field))
-            if code in ("", "0"):
-                blank += 1
-                code = ""
-            zname = " ".join(str(r.attrs.get(name_field, "") or "").split()) if name_field else ""
-            if code:
-                codes.setdefault(code, zname)
-            invalid += 0 if r.valid else 1
-            b = g.bounds if g is not None and not g.is_empty else (None, None, None, None)
-            rows.append((r.fid, code, zname, mapping.get(r.attrs, "key"), g.wkb if g is not None else None,
-                         float(g.area) if g is not None else None, *b, int(r.valid), r.issue))
-        summary = {"records": len(records), "zones": len(codes), "invalid": invalid, "without_zone": blank,
-                   "crs_code": info.crs_code}
-        with self.db.transaction():
-            version = int(self.db.query_one("SELECT COALESCE(MAX(version),0) FROM zoning_layers WHERE name=?",
-                                            (name,))[0]) + 1
-            lid = new_id()
-            sources = []
-            for _, path in sorted(components(shp).items()):
-                stored = self.ws.store.import_file(path, None, "cadastre")
-                sources.append({"file": path.name, "stored_path": stored.relative_path, "sha256": stored.sha256})
-            self.db.execute("UPDATE zoning_layers SET active=0")
-            self.db.execute(
-                "INSERT INTO zoning_layers(id,name,version,crs_code,encoding,mapping_json,source_json,summary_json,"
-                "record_count,imported_at,imported_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                (lid, name, version, info.crs_code, info.encoding, json.dumps(mapping.to_dict(), ensure_ascii=False),
-                 json.dumps(sources, ensure_ascii=False), json.dumps({**summary, "codes": codes}, ensure_ascii=False),
-                 len(records), now_iso(), user.username))
-            self.db.conn.executemany(
-                "INSERT INTO zoning_pieces(layer_id,fid,zone_id,zone_name,dls_key,wkb,area_m2,minx,miny,maxx,maxy,"
-                "valid,issue) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", [(lid, *r) for r in rows])
-            self.ws.audit.record(user, "import_zoning", "zoning_layer", lid, None, name=name, version=version,
-                                 records=len(records), zones=len(codes))
-        return {"id": lid, "name": name, "version": version, **summary, "codes": codes}
+    def import_layer(self, user: "User", shp: Path, mapping: FieldMapping, name: str = "",
+                     declared_crs: str = "") -> dict[str, Any]:
+        """Stage and immediately activate a zoning layer (see ``DatasetManager`` for the staged workflow)."""
+        staged = self.ws.datasets.stage("zoning", user, shp, mapping, name, declared_crs)
+        self.ws.datasets.activate("zoning", user, staged.id, "imported and activated in one step")
+        s = staged.summary
+        return {"id": staged.id, "name": staged.name, "version": staged.version, "records": s["records"],
+                "zones": s["zones"], "invalid": s["invalid"], "without_zone": s["without_zone"],
+                "crs_code": staged.crs_code, "codes": s["codes"]}
 
     def active_layer(self) -> dict[str, Any] | None:
-        r = self.db.query_one("SELECT * FROM zoning_layers WHERE active=1 ORDER BY imported_at DESC LIMIT 1")
+        r = self.db.query_one("SELECT * FROM zoning_layers WHERE active=1 ORDER BY activated_at DESC LIMIT 1")
         if r is None:
             return None
         return {"id": r["id"], "name": r["name"], "version": r["version"], "crs_code": r["crs_code"],

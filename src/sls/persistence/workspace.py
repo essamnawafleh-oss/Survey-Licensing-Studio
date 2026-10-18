@@ -110,6 +110,11 @@ class Workspace:
         from .setback_approvals_repo import SetbackApprovalRepository
 
         self.setback_approvals = SetbackApprovalRepository(self)
+        from .datasets import DatasetManager
+        from .roads_repo import RoadRepository
+
+        self.datasets = DatasetManager(self)
+        self.roads = RoadRepository(self)
 
     @property
     def db_path(self) -> Path:

@@ -16,7 +16,7 @@ from ..core.errors import StorageError
 
 CATEGORIES = (
     "drawing_source", "drawing_revision", "license_doc", "photo", "attachment", "report",
-    "rule_workbook", "cadastre",
+    "rule_workbook", "cadastre", "gis",
 )
 
 
