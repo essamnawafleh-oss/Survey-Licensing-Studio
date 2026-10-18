@@ -55,6 +55,7 @@
  "app.settings_problems": "Some settings could not be used and defaults were applied:\n{problems}",
  "app.title": "Survey & Licensing Studio",
  "app.undone": "Undone: {what}",
+ "app.unexpected_error": "An unexpected error occurred: {error}\nThe details were written to the diagnostic log:\n{log}",
  "app.unsaved": "The drawing has unsaved changes. Save a new revision?",
  "app.verify_units_hint": "Verify the drawing units and coordinate system in Case details before calculating.",
  "app.welcome": "Ready. Open or create a licensing case (File menu). Type commands here, e.g. L, PL, REC, C, M, CO, RO, SC, O, TR, EX, E, DI, AA, T, DIM, ZE.",

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QMessageBox
@@ -20,12 +21,22 @@ def create_app(argv: list[str] | None = None) -> QApplication:
     return app
 
 
-def run(settings: Settings | None = None) -> int:
+def run(settings: Settings | None = None, log_path: Path | None = None) -> int:
     problems: list[str] = []
     if settings is None:
         settings, problems = load_settings_checked()
     set_language(settings.language)
     app = create_app()
+    from ..core.diagnostics import LOGGER, install_exception_hooks
+
+    for p in problems:
+        LOGGER.warning("settings: %s", p)
+
+    def show(message: str) -> None:  # uncaught errors in slots: logged, and the user is told where
+        QMessageBox.critical(None, tr("app.title"), tr("app.unexpected_error", error=message,
+                                                       log=str(log_path or "")))
+
+    install_exception_hooks(show)
     if problems:
         QMessageBox.warning(None, tr("app.title"), tr("app.settings_problems", problems="\n".join(problems)))
     app.setLayoutDirection(Qt.RightToLeft if is_rtl() else Qt.LeftToRight)

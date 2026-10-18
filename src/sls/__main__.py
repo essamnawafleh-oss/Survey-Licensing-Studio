@@ -5,6 +5,7 @@
     python -m sls list-backups    list available backups
     python -m sls restore FILE    restore the database from FILE (current DB is preserved)
     python -m sls create-admin USERNAME   create an admin account (prompts for password)
+    python -m sls self-test [--report FILE]  offline self-test on temporary data (release check)
 """
 from __future__ import annotations
 
@@ -25,11 +26,22 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("file", type=Path)
     a = sub.add_parser("create-admin")
     a.add_argument("username")
+    t = sub.add_parser("self-test")
+    t.add_argument("--report", type=Path, default=None)
     args = parser.parse_args(argv)
+    from .core.diagnostics import LOGGER, log_startup, setup_logging
+
+    log_path = setup_logging()
+    log_startup()
+    LOGGER.info("command %s", args.cmd or "gui")
+    if args.cmd == "self-test":
+        from .selftest import main as self_test
+
+        return self_test(args.report)
     if args.cmd is None:
         from .ui.app import run
 
-        return run()  # loads the settings itself and reports any that could not be used
+        return run(log_path=log_path)  # loads the settings itself and reports any that could not be used
     settings = load_settings()
     from .persistence.backup import list_backups, restore_backup
     from .persistence.workspace import DB_FILENAME, Workspace

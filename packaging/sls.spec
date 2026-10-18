@@ -23,4 +23,7 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="SurveyLicensingStudio", console=False)
-coll = COLLECT(exe, a.binaries, a.datas, name="SurveyLicensingStudio")
+# Console twin for administration and release checks (backup, restore, create-admin, self-test):
+# the windowed executable has no console, so their output would be invisible.
+exe_console = EXE(pyz, a.scripts, [], exclude_binaries=True, name="SurveyLicensingStudio-console", console=True)
+coll = COLLECT(exe, exe_console, a.binaries, a.datas, name="SurveyLicensingStudio")
