@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+.venv/
+venv/
+# Local application data must never be committed (confidential survey data)
+sls_data/
+*.sqlite3
+*.db
