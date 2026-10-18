@@ -325,6 +325,7 @@
  "help.about": "Survey & Licensing Studio {version}\nLocal-first CAD and building licensing tool.\nData directory: {data}\nAll processing is local; nothing is sent to external services.",
  "help.limitations": "Known limitations of this version:\n• DWG requires ODA File Converter and is not yet verified with real DWG files.\n• Trim/Extend work on LINE entities only.\n• HATCH, 3D solids, images and paper-space entities are not imported (always listed in the import report).\n• Survey/regulatory plan transformation is not implemented: only an extent check and unchanged reference insertion.\n• Engine diagnostic messages are in English.\n• Office documents cannot be embedded in the PDF; convert to PDF first.\n• Local accounts are not a security boundary.",
  "import.accounting": "Entity accounting (nothing is dropped silently):",
+ "import.actions": "What to check before using this drawing ({n}):",
  "import.approximated": "Approximated",
  "import.converter": "DWG converter",
  "import.crs_check": "Coordinate check",

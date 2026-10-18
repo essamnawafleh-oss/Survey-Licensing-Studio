@@ -46,6 +46,13 @@ class ImportPreviewDialog(QDialog):
                              report.expanded.get(t, ""), report.skipped.get(t, "")] for t in types])
         ll.addWidget(QLabel(tr("import.accounting")))
         ll.addWidget(counts)
+        if report.actions:
+            ll.addWidget(QLabel(tr("import.actions", n=len(report.actions))))
+            acts = QListWidget()
+            acts.setWordWrap(True)
+            for a in report.actions:
+                acts.addItem("→ " + a)
+            ll.addWidget(acts)
         warn = QListWidget()
         for w in report.warnings + [f"[audit] {f}" for f in report.audit_fixes] + \
                 [f"[converter] {m}" for m in report.converter_messages if m.upper().startswith("ERROR")]:

@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..core.errors import DwgUnavailableError
-from .dxf_io import ImportReport, export_dxf, import_dxf
+from .dxf_io import ImportReport, export_dxf, import_actions, import_dxf
 from .model import Drawing
 
 _ODA_NAMES = ("ODAFileConverter.exe", "ODAFileConverter")
@@ -164,6 +164,7 @@ def import_dwg(path: Path, oda_path: str = "", libredwg_path: str = "") -> tuple
     if errors:
         report.warnings.insert(1, f"The converter reported {len(errors)} read error(s): some entities may be missing "
                                   "or damaged. Compare with the source in AutoCAD before relying on them.")
+    report.actions = import_actions(report)  # now including the converter checks
     drawing.info["source_name"] = path.name
     drawing.info["converted_from"] = "DWG"
     drawing.info["converter"] = conv.label

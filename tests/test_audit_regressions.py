@@ -584,3 +584,52 @@ def test_p14_p15_damaged_settings_never_block_start_up(tmp_path):
     s, problems = load_settings_checked(path)                                    # BOM, wrong type, bad value
     assert s.language == "en" and s.backup_retention == 30 and s.setback_method == "offset_corner"
     assert len(problems) == 2
+
+
+# Phase 3 -- actionable import report ----------------------------------------------------------------
+
+def test_import_report_lists_concrete_actions(tmp_path):
+    from sls.cad.dxf_io import import_dxf
+
+    def build(m):
+        m.add_line((0, 0), (10, 0))
+        m.add_polyline2d([(0, 0)])                                 # damaged
+        h = m.add_hatch()
+        h.paths.add_polyline_path([(0, 0), (1, 0), (1, 1)], is_closed=True)
+        m.add_spline([(0, 0), (1, 1), (2, 0), (3, 1)])            # approximated
+
+    import ezdxf
+
+    doc = ezdxf.new()
+    doc.header["$INSUNITS"] = 0                                    # units not declared
+    build(doc.modelspace())
+    doc.saveas(str(tmp_path / "a.dxf"))
+    _, report = import_dxf(tmp_path / "a.dxf")
+    text = " ".join(report.actions)
+    assert "redraw them" in text and report.damaged_handles[0] in text
+    assert "HATCH" in text and "approximated" in text and "units are not declared" in text
+
+
+def test_dwg_import_report_requires_comparison_with_source(tmp_path, monkeypatch):
+    from sls.cad import dwg
+
+    src = tmp_path / "plan.dwg"
+    src.write_bytes(b"AC1032 fake")
+    before = src.read_bytes()
+
+    def fake_convert(exe, path, dst):
+        import ezdxf
+
+        d = ezdxf.new()
+        d.header["$INSUNITS"] = 6
+        d.modelspace().add_line((0, 0), (1, 0))
+        d.saveas(str(dst))
+        return ["ERROR: bad object 0x1F"]
+
+    conv = dwg.Converter("libredwg", tmp_path / "dwg2dxf")
+    monkeypatch.setattr(dwg, "libredwg_version", lambda p: "test")
+    monkeypatch.setattr(dwg, "choose_converter", lambda *a: conv)
+    monkeypatch.setattr(dwg, "_convert_libredwg", fake_convert)
+    _, report = dwg.import_dwg(src)
+    assert src.read_bytes() == before                              # source untouched
+    assert any("compare layers, entity counts" in a and "1 read error" in a for a in report.actions)

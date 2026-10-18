@@ -55,6 +55,9 @@ class ImportReport:
     damaged_handles: list[str] = field(default_factory=list)
     inconsistent_text_alignment: int = 0
     duplicate_ids: int = 0       # entities whose stored SLS id was already used (e.g. copied in CAD)
+    misaligned_text_handles: list[str] = field(default_factory=list)
+    recovered: bool = False      # read by the recovery loader (damaged file)
+    actions: list[str] = field(default_factory=list)  # what the user must check or do, from the findings
     converter: str = ""          # e.g. "LibreDWG 0.9.3" when imported from DWG
     converter_messages: list[str] = field(default_factory=list)
     crs_code: str = ""
@@ -253,6 +256,7 @@ class _Importer:
                     limit = max(height, 1e-6) * (2 * max(len(text), 1) + 10)
                     if math.dist((a.x, a.y), (p.x, p.y)) > limit:
                         self.report.inconsistent_text_alignment += 1
+                        self.report.misaligned_text_handles.append(str(e.dxf.get("handle", "?")))
                         meta["alignment_point_ignored"] = [a.x, a.y]
                     elif halign in (3, 5) and valign == 0:
                         # ALIGNED / FIT: the text runs from the insertion point to the alignment point
@@ -329,6 +333,7 @@ def import_dxf(path: Path) -> tuple[Drawing, ImportReport]:
     report = ImportReport(path.name, doc.dxfversion, insunits, suggested.value)
     report.audit_fixes = [str(f.message) for f in auditor.fixes]
     if recovered:
+        report.recovered = True
         report.warnings.append(f"The file is damaged ({recovered}); it was read in recovery mode. Compare the "
                                "imported drawing with the source in CAD before using it.")
         if len(doc.modelspace()) == 0:
@@ -394,7 +399,49 @@ def import_dxf(path: Path) -> tuple[Drawing, ImportReport]:
         report.warnings.append("The DXF file does not declare drawing units ($INSUNITS). Units must be set "
                                "and verified before any measurement.")
     drawing.active_layer = drawing.layers[0].name if drawing.layers else "0"
+    report.actions = import_actions(report)
     return drawing, report
+
+
+def _handles(hs: list[str]) -> str:
+    return ", ".join(hs[:30]) + (f" … (+{len(hs) - 30})" if len(hs) > 30 else "")
+
+
+def import_actions(report: ImportReport) -> list[str]:
+    """Concrete checks the user must make before relying on the imported drawing."""
+    acts: list[str] = []
+    if report.recovered:
+        acts.append("The file was damaged and read in recovery mode: open it in CAD, compare entity counts per layer "
+                    "with this report, and re-export a clean DXF if anything is missing.")
+    if report.converter:
+        errs = sum(1 for m in report.converter_messages if m.upper().startswith("ERROR"))
+        acts.append(f"Converted from DWG with {report.converter}: DWG conversion is not verified. Open the original "
+                    "DWG in AutoCAD and compare layers, entity counts and key coordinates with this report before use."
+                    + (f" The converter reported {errs} read error(s) (listed below)." if errs else ""))
+    if report.damaged_handles:
+        acts.append("Damaged polylines were not imported. In AutoCAD find them by handle (e.g. command LIST, or "
+                    "SELECT with the handle via a script) and redraw them: " + _handles(report.damaged_handles))
+    if report.misaligned_text_handles:
+        acts.append("Texts with a corrupt alignment point were placed at their insertion point; check their position "
+                    "in AutoCAD: " + _handles(report.misaligned_text_handles))
+    skipped = [t for t in report.skipped if "damaged" not in t]
+    if skipped:
+        acts.append("Not imported: " + ", ".join(f"{report.skipped[t]} × {t}" for t in skipped) + ". If any carries "
+                    "survey information (e.g. hatch boundaries, solids), redraw it as polylines or explode it in CAD "
+                    "and import again.")
+    if report.approximated:
+        acts.append("Curves were approximated by polylines (" + ", ".join(f"{n} × {t}" for t, n in
+                                                                          report.approximated.items())
+                    + "); verify arcs that matter for boundaries or setbacks.")
+    if report.paperspace_entities:
+        acts.append(f"{report.paperspace_entities} paper-space entities (layouts, title blocks) are not imported; "
+                    "only model space is used.")
+    if report.suggested_unit == LengthUnit.UNKNOWN.value or report.insunits_code in (None, 0):
+        acts.append("The drawing units are not declared: set and verify them in Case details before any measurement.")
+    if report.duplicate_ids:
+        acts.append(f"{report.duplicate_ids} copied entities received new ids; check that no geometry is duplicated "
+                    "by mistake.")
+    return acts
 
 
 _VALID_LW = [0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53, 60, 70, 80, 90, 100, 106, 120, 140, 158, 200, 211]
