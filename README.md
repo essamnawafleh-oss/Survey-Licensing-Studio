@@ -12,9 +12,14 @@ All processing is offline: no survey geometry or document ever leaves the workst
 
 ## Installation (Windows)
 
-**With the installer (recommended):** run `SurveyLicensingStudio-Setup-<version>.exe`.
-- No Python and no administrator rights are needed. By default it installs for the current user
-  in `%LOCALAPPDATA%\Programs\Survey Licensing Studio`; an administrator can choose all users.
+**With the installer (recommended):** download `SurveyLicensingStudio-Setup-<version>.exe` from the
+[Releases page](https://github.com/essamnawafleh-oss/Survey-Licensing-Studio/releases) (current
+pre-release: [v0.1.0-rc1](https://github.com/essamnawafleh-oss/Survey-Licensing-Studio/releases/tag/v0.1.0-rc1)),
+double-click it and follow the wizard. The wizard is in Arabic or English, chosen from the Windows
+display language. It asks once for administrator rights and installs to `Program Files` with
+Start-menu and desktop shortcuts.
+- No Python is needed. A per-user install without administrator rights is possible from the command
+  line: `Setup.exe /CURRENTUSER`.
 - It adds Start-menu entries for the program and for its offline self-test.
 - Installing a newer version upgrades in place.
 - The installer is built by the Windows CI workflow (artifact *SurveyLicensingStudio-Setup*), or
