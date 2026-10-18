@@ -81,7 +81,49 @@ jobs:
           $summary = Get-Content dist\selftest-fresh-user.json | ConvertFrom-Json
           foreach ($c in $summary.checks) { Write-Output "::notice title=self-test $($c.name)::ok=$($c.ok) $($c.detail)" }
 
-      - name: Upload the distribution folder and self-test reports
+      - name: Build Setup.exe (Inno Setup)
+        run: |
+          . (Join-Path $env:RUNNER_TEMP "logged.ps1")
+          $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          if (-not (Test-Path $iscc)) { Write-Output "::error::Inno Setup 6 not available"; exit 1 }
+          $version = (Select-String -Path src\sls\__init__.py -Pattern '__version__ = "(.+)"').Matches[0].Groups[1].Value
+          Invoke-Logged "iscc" { & $iscc "/DAppVersion=$version" packaging\installer.iss }
+          $setup = Get-ChildItem dist\SurveyLicensingStudio-Setup-*.exe
+          Write-Output "::notice title=installer::$($setup.Name) $([math]::Round($setup.Length / 1MB, 1)) MB"
+
+      - name: Install, self-test, upgrade and uninstall as a new user
+        run: |
+          . (Join-Path $env:RUNNER_TEMP "logged.ps1")
+          $setup = (Get-ChildItem dist\SurveyLicensingStudio-Setup-*.exe).FullName
+          $fresh = Join-Path $env:RUNNER_TEMP "installer-user"
+          New-Item -ItemType Directory -Force -Path "$fresh\Roaming", "$fresh\Local" | Out-Null
+          $env:APPDATA = "$fresh\Roaming"
+          $env:LOCALAPPDATA = "$fresh\Local"
+          $dir = Join-Path $env:RUNNER_TEMP "installed app"
+          function Install($log) {
+              $p = Start-Process $setup -Wait -PassThru -ArgumentList @("/VERYSILENT", "/SUPPRESSMSGBOXES",
+                  "/NORESTART", "/CURRENTUSER", "/DIR=`"$dir`"", "/LOG=`"$log`"")
+              if ($p.ExitCode -ne 0) { Get-Content $log -Tail 40 | Write-Host; Write-Output "::error::installer exit $($p.ExitCode)"; exit 1 }
+          }
+          Install (Join-Path $env:RUNNER_TEMP "install.log")
+          if (-not (Test-Path "$dir\SurveyLicensingStudio.exe")) { Write-Output "::error::program not installed"; exit 1 }
+          Invoke-Logged "installed-self-test" { & "$dir\SurveyLicensingStudio-console.exe" self-test --report "$env:RUNNER_TEMP\selftest-installed.json" }
+          $data = "$fresh\Local\SurveyLicensingStudio\data"
+          New-Item -ItemType Directory -Force -Path $data | Out-Null
+          Set-Content "$data\user-marker.txt" "user data that must survive upgrade and uninstall"
+          Set-Content "$fresh\Roaming\SurveyLicensingStudio\settings.json" '{"language": "en"}' -Force
+          Install (Join-Path $env:RUNNER_TEMP "upgrade.log")                  # same AppId: upgrade in place
+          if (-not (Test-Path "$data\user-marker.txt")) { Write-Output "::error::upgrade removed user data"; exit 1 }
+          Invoke-Logged "upgraded-self-test" { & "$dir\SurveyLicensingStudio-console.exe" self-test --report "$env:RUNNER_TEMP\selftest-upgraded.json" }
+          $un = Start-Process "$dir\unins000.exe" -Wait -PassThru -ArgumentList @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART")
+          for ($i = 0; $i -lt 60 -and (Test-Path "$dir\SurveyLicensingStudio.exe"); $i++) { Start-Sleep 1 }
+          if (Test-Path "$dir\SurveyLicensingStudio.exe") { Write-Output "::error::uninstall left the program in place"; exit 1 }
+          if (-not (Test-Path "$data\user-marker.txt")) { Write-Output "::error::uninstall removed user data"; exit 1 }
+          if (-not (Test-Path "$fresh\Roaming\SurveyLicensingStudio\settings.json")) { Write-Output "::error::uninstall removed settings"; exit 1 }
+          Write-Output "::notice title=installer test::installed per-user, self-test passed, upgrade kept user data, uninstall removed the program and kept data and settings"
+
+      - name: Upload the distribution folder, installer and self-test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -89,4 +131,12 @@ jobs:
           path: |
             dist/SurveyLicensingStudio
             dist/selftest*.json
+          if-no-files-found: warn
+
+      - name: Upload Setup.exe
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SurveyLicensingStudio-Setup
+          path: dist/SurveyLicensingStudio-Setup-*.exe
           if-no-files-found: warn

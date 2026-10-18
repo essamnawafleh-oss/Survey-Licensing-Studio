@@ -1,0 +1,33 @@
+﻿Survey & Licensing Studio — استوديو المساحة والترخيص
+
+Your data is kept separate from the program
+--------------------------------------------
+The program is installed in its own folder. Your cases, database, backups and logs are kept in
+your user profile and are NEVER changed or removed by this installer or by uninstalling:
+
+  Data and backups:  %LOCALAPPDATA%\SurveyLicensingStudio\data
+  Settings:          %APPDATA%\SurveyLicensingStudio\settings.json
+  Diagnostic log:    %LOCALAPPDATA%\SurveyLicensingStudio\logs\sls.log
+
+Installing a newer version upgrades the program in place. On first start, a newer version
+backs up the database before updating its format.
+
+After installing, the Start menu entry "Survey & Licensing Studio self-test" checks the
+installation offline on temporary data (your data is not touched).
+
+This installer is not code-signed: Windows SmartScreen may ask for confirmation.
+Optional external tools (not included): ODA File Converter or LibreDWG for DWG files,
+Tesseract OCR for OCR. Their paths are set in File > Settings.
+
+بياناتك منفصلة عن البرنامج
+---------------------------
+يُثبَّت البرنامج في مجلده الخاص. المعاملات وقاعدة البيانات والنسخ الاحتياطية والسجلات تُحفظ في
+ملف المستخدم ولا يغيّرها أو يحذفها المثبّت ولا إلغاء التثبيت أبداً:
+
+  البيانات والنسخ الاحتياطية:  %LOCALAPPDATA%\SurveyLicensingStudio\data
+  الإعدادات:                  %APPDATA%\SurveyLicensingStudio\settings.json
+  سجل التشخيص:               %LOCALAPPDATA%\SurveyLicensingStudio\logs\sls.log
+
+تثبيت إصدار أحدث يحدّث البرنامج في مكانه، ويأخذ نسخة احتياطية من قاعدة البيانات قبل تحديث
+صيغتها عند أول تشغيل. اختصار "self-test" في قائمة ابدأ يفحص التثبيت دون إنترنت على بيانات مؤقتة.
+المثبّت غير موقّع رقمياً، لذلك قد يطلب Windows SmartScreen تأكيداً.

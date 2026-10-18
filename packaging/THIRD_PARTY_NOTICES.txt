@@ -1,0 +1,31 @@
+Survey & Licensing Studio — third-party components bundled in this installation
+==============================================================================
+
+The program folder contains these open-source components, each under its own licence.
+The licence texts are included in the respective package folders under _internal\ where the
+package ships them. Before redistributing this installer outside the department, have the
+licences reviewed.
+
+Component              Licence                     Notes
+---------------------  --------------------------  ------------------------------------------
+Python runtime         PSF License
+Qt 6 / PySide6         LGPL v3                     dynamically linked (separate DLLs)
+GEOS (via shapely)     LGPL v2.1
+shapely                BSD-3-Clause
+PROJ (via pyproj)      MIT                         incl. proj.db coordinate-system database
+pyproj                 MIT
+numpy                  BSD-3-Clause
+ezdxf                  MIT
+ReportLab              BSD
+pypdf                  BSD-3-Clause
+Pillow                 MIT-CMU (HPND)
+openpyxl               MIT
+xlrd                   BSD
+pyshp                  MIT
+arabic-reshaper        MIT
+python-bidi            LGPL v3
+Noto Sans, Noto Naskh  SIL Open Font License 1.1   licence texts in _internal\sls\resources\fonts
+Arabic
+
+Not included: ODA File Converter, LibreDWG, Tesseract OCR (optional, installed separately
+under their own terms).
