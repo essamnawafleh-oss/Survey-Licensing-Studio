@@ -52,6 +52,7 @@
  "app.saved": "Drawing revision {rev} saved.",
  "app.saved_from_editor": "Saved from editor",
  "app.saving_import": "Saving the drawing into the case…",
+ "app.settings_problems": "Some settings could not be used and defaults were applied:\n{problems}",
  "app.title": "Survey & Licensing Studio",
  "app.undone": "Undone: {what}",
  "app.unsaved": "The drawing has unsaved changes. Save a new revision?",

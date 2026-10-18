@@ -26,11 +26,11 @@ def main(argv: list[str] | None = None) -> int:
     a = sub.add_parser("create-admin")
     a.add_argument("username")
     args = parser.parse_args(argv)
-    settings = load_settings()
     if args.cmd is None:
         from .ui.app import run
 
-        return run(settings)
+        return run()  # loads the settings itself and reports any that could not be used
+    settings = load_settings()
     from .persistence.backup import list_backups, restore_backup
     from .persistence.workspace import DB_FILENAME, Workspace
 

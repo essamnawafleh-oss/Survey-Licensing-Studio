@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from ..core.i18n import is_rtl, set_language, tr
-from ..core.settings import Settings, load_settings
+from ..core.settings import Settings, load_settings_checked
 from ..persistence.workspace import Workspace
 from .theme import apply_theme
 
@@ -21,9 +21,13 @@ def create_app(argv: list[str] | None = None) -> QApplication:
 
 
 def run(settings: Settings | None = None) -> int:
-    settings = settings or load_settings()
+    problems: list[str] = []
+    if settings is None:
+        settings, problems = load_settings_checked()
     set_language(settings.language)
     app = create_app()
+    if problems:
+        QMessageBox.warning(None, tr("app.title"), tr("app.settings_problems", problems="\n".join(problems)))
     app.setLayoutDirection(Qt.RightToLeft if is_rtl() else Qt.LeftToRight)
     try:
         ws = Workspace(settings)

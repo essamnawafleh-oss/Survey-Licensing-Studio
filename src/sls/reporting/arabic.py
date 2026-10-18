@@ -13,9 +13,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import arabic_reshaper
-# The pure-Python implementation applies bracket mirroring (rule L4); the compiled
-# `bidi.get_display` in python-bidi 0.6 does not.
-from bidi.algorithm import get_display
+# The compiled `bidi.get_display` (python-bidi 0.6) implements the paired-bracket rule N0, so
+# mixed Arabic/Latin text with brackets is ordered correctly, but it does not mirror glyphs
+# (rule L4); `_mirror_brackets` does that. (The pure-Python algorithm mirrors but lacks N0.)
+from bidi import get_display
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Flowable
@@ -64,7 +65,41 @@ def visual(text: str, base_dir: str) -> str:
     if not text:
         return ""
     shaped = arabic_reshaper.reshape(text) if has_arabic(text) else text
-    return get_display(shaped, base_dir=base_dir)
+    return _mirror_brackets(get_display(shaped, base_dir=base_dir), base_dir)
+
+
+_MIRROR = {"(": ")", ")": "(", "[": "]", "]": "[", "{": "}", "}": "{", "<": ">", ">": "<", "«": "»", "»": "«"}
+
+
+def _strong(ch: str) -> str:
+    b = unicodedata.bidirectional(ch)
+    if b in ("R", "AL") or 0xFB50 <= ord(ch) <= 0xFEFF:  # incl. Arabic presentation forms
+        return "R"
+    return "L" if b == "L" else ""
+
+
+def _mirror_brackets(vis: str, base_dir: str) -> str:
+    """Rule L4 on a visual line: mirror brackets that resolved right-to-left.
+
+    A bracket resolves to the paragraph direction unless both its nearest strong neighbours have
+    the opposite direction (UAX #9 N0 for the common cases: an English word in brackets inside
+    Arabic text, Arabic in brackets inside English text, numbers in brackets).
+    """
+    if not any(c in _MIRROR for c in vis):
+        return vis
+    out = list(vis)
+    for i, ch in enumerate(vis):
+        if ch not in _MIRROR:
+            continue
+        left = next((d for d in map(_strong, reversed(vis[:i])) if d), "")
+        right = next((d for d in map(_strong, vis[i + 1:]) if d), "")
+        if base_dir == "R":
+            rtl = not (left == "L" and right == "L")
+        else:
+            rtl = left == "R" and right == "R"
+        if rtl:
+            out[i] = _MIRROR[ch]
+    return "".join(out)
 
 
 def runs(visual_text: str, bold: bool = False) -> list[tuple[str, str]]:

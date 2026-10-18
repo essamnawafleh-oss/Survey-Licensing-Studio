@@ -163,6 +163,15 @@ class DrawingRepository:
             if not rec.boundary_entity_id or len(rec.boundary_points) < 3:
                 raise ValidationError("Select a closed property boundary before verifying it.")
             rec.verified, rec.verified_by, rec.verified_at = True, user.username, now_iso()
+        was_new = not rec.id
+        try:
+            return self._save_parcel(user, rec, verify)
+        except BaseException:
+            if was_new:
+                rec.id = ""  # a failed first save can be retried (it inserts again)
+            raise
+
+    def _save_parcel(self, user: "User", rec: ParcelRecord, verify: bool) -> ParcelRecord:
         with self.db.transaction():
             if not rec.id:
                 rec.id = new_id()

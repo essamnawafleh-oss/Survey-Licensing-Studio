@@ -262,7 +262,11 @@ def _preflight(docs: list[SourceDocument]) -> list[dict[str, Any]]:
                 if d.page_selection:
                     raise ReportError("page selection is not applicable to an image")
                 with Image.open(d.path) as im:
-                    im.verify()
+                    frames = getattr(im, "n_frames", 1)
+                    im.load()  # full decode: truncated images are refused here, not mid-report
+                if frames > 1:
+                    raise ReportError(f"image has {frames} pages; only single-page images can be embedded "
+                                      "(convert it to PDF to include every page)")
                 e["pages"] = [1]
                 e["type"] = "image"
             else:
@@ -547,7 +551,12 @@ def _body(data: ReportData, opts: ReportOptions, nf: NumberFormat, manifest_entr
         story += [PageBreak(), ctx.h(ctx.t("rpt.sec_photos"))]
         for ph in data.photos:
             try:
+                from ..persistence.filestore import sha256_file
+
+                if sha256_file(ph.path) != ph.sha256:
+                    raise OSError("file content does not match its recorded checksum")
                 with Image.open(ph.path) as im:
+                    im.load()  # decode fully now: a damaged image must not abort the whole report later
                     iw, ih = im.size
                 max_w, max_h = tw, th * 0.42
                 ratio = min(max_w / iw, max_h / ih)

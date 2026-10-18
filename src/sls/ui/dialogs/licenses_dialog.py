@@ -281,7 +281,9 @@ class LicensesDialog(QDialog):
             return
         paths, _ = QFileDialog.getOpenFileNames(self, tr("lic.attach"))
         for p in paths:
-            refs, _ok = QInputDialog.getText(self, tr("lic.page_refs"), tr("lic.page_refs_prompt", name=Path(p).name))
+            refs, ok = QInputDialog.getText(self, tr("lic.page_refs"), tr("lic.page_refs_prompt", name=Path(p).name))
+            if not ok:
+                continue  # Cancel: this document is not attached
             try:
                 self.ws.licenses.attach_document(self.ws.user, self.current.id, Path(p), refs)
             except Exception as exc:  # noqa: BLE001

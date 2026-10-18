@@ -105,6 +105,15 @@ class CaseRepository:
         if errors:
             raise ValidationError("; ".join(errors), errors=errors)
         ts = now_iso()
+        was_new = not case.id
+        try:
+            return self._save(user, case, ts)
+        except BaseException:
+            if was_new:
+                case.id, case.created_at, case.created_by = "", "", ""
+            raise
+
+    def _save(self, user: User, case: Case, ts: str) -> Case:
         with self.db.transaction():
             dup = self.db.query_one(
                 "SELECT id FROM cases WHERE case_number=? AND id<>?", (case.case_number.strip(), case.id)
@@ -113,9 +122,8 @@ class CaseRepository:
                 raise ValidationError(f"Case number '{case.case_number}' already exists.")
             u = case.units
             if not case.id:
-                case.id = new_id()
-                case.created_at = ts
-                case.created_by = user.username
+                # save() resets these if the transaction fails, so a retry inserts again
+                case.id, case.created_at, case.created_by = new_id(), ts, user.username
                 self.db.execute(
                     "INSERT INTO cases(id,case_number,status,parcel_identifier,survey_date,surveyor,rule_version_id,"
                     "land_use_code,units,units_verified,units_verified_by,crs_id,crs_kind,notes,created_at,created_by,updated_at)"

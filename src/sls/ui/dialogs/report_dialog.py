@@ -175,6 +175,9 @@ class ReportDialog(QDialog):
         path, _ = QFileDialog.getSaveFileName(self, tr("report.save_copy"),
                                               f"report_r{rep.revision:03d}_{rep.status}.pdf", "PDF (*.pdf)")
         if path:
-            Path(path).write_bytes(self.ws.files.path(rep.file_id).read_bytes())
-            Path(path).with_suffix(".manifest.json").write_text(
-                json.dumps(rep.manifest, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+            try:
+                Path(path).write_bytes(self.ws.files.path(rep.file_id).read_bytes())
+                Path(path).with_suffix(".manifest.json").write_text(
+                    json.dumps(rep.manifest, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+            except OSError as exc:  # e.g. the stored report file is missing from the data folder
+                show_error(self, exc)

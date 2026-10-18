@@ -129,6 +129,15 @@ class LicenseRepository:
         if errors:
             raise ValidationError("; ".join(errors), errors=errors)
         ts = now_iso()
+        was_new = not rec.id
+        try:
+            return self._save(user, rec, ts)
+        except BaseException:
+            if was_new:
+                rec.id = ""  # a failed first save can be retried (it inserts again)
+            raise
+
+    def _save(self, user: "User", rec: LicenseRecord, ts: str) -> LicenseRecord:
         with self.db.transaction():
             if not rec.id:
                 rec.id = new_id()

@@ -67,14 +67,30 @@ class Settings:
         return json.dumps(asdict(self), ensure_ascii=False, indent=2)
 
     @classmethod
-    def from_dict(cls, d: dict[str, object]) -> "Settings":
-        known = {f.name for f in fields(cls)}
-        values = {k: v for k, v in d.items() if k in known}
-        nf = values.pop("number_format", None)
+    def from_dict(cls, d: dict[str, object], problems: list[str] | None = None) -> "Settings":
+        """Build settings from stored values; invalid values are replaced by defaults and listed in ``problems``."""
+        problems = problems if problems is not None else []
+        defaults = cls()
+        values: dict[str, object] = {}
+        for f in fields(cls):
+            if f.name not in d or f.name == "number_format":
+                continue
+            v = _checked(f.name, d[f.name], getattr(defaults, f.name), problems)
+            if v is not _INVALID:
+                values[f.name] = v
         s = cls(**values)  # type: ignore[arg-type]
+        nf = d.get("number_format")
         if isinstance(nf, dict):
-            nf_known = {f.name for f in fields(NumberFormat)}
-            s.number_format = NumberFormat(**{k: v for k, v in nf.items() if k in nf_known})
+            nd = NumberFormat()
+            s.number_format = NumberFormat(**{f.name: v for f in fields(NumberFormat) if f.name in nf
+                                              and (v := _checked(f.name, nf[f.name], getattr(nd, f.name), problems))
+                                              is not _INVALID})
+        if s.language not in ("ar", "en"):
+            problems.append(f"language '{s.language}' is not supported; using 'ar'.")
+            s.language = "ar"
+        if s.setback_method not in ("offset_corner", "distance_zone"):
+            problems.append(f"setback_method '{s.setback_method}' is unknown; using 'offset_corner'.")
+            s.setback_method = "offset_corner"
         return s
 
 
@@ -83,12 +99,56 @@ def settings_path() -> Path:
     return Path(override) if override else default_config_dir() / "settings.json"
 
 
-def load_settings(path: Path | None = None) -> Settings:
+_INVALID = object()
+
+
+def _checked(name: str, value: object, default: object, problems: list[str]) -> object:
+    """``value`` if it has the default's type (ints accepted for floats), else _INVALID (and a problem note)."""
+    if isinstance(default, bool):
+        ok = isinstance(value, bool)
+    elif isinstance(default, int):
+        ok = isinstance(value, int) and not isinstance(value, bool)
+    elif isinstance(default, float):
+        ok = isinstance(value, (int, float)) and not isinstance(value, bool)
+        value = float(value) if ok else value  # type: ignore[arg-type]
+    else:
+        ok = isinstance(value, type(default))
+    if not ok:
+        problems.append(f"{name}: invalid value {value!r}; the default {default!r} is used.")
+        return _INVALID
+    return value
+
+
+def load_settings_checked(path: Path | None = None) -> tuple[Settings, list[str]]:
+    """Load settings; a damaged file never prevents start-up.
+
+    Unreadable JSON is moved aside as ``settings.json.bad-<time>`` (kept for inspection) and defaults
+    are used; individual invalid values fall back to their defaults. The problems are returned so the
+    application can tell the user.
+    """
     path = path or settings_path()
     if not path.exists():
-        return Settings()
-    with path.open(encoding="utf-8") as fh:
-        return Settings.from_dict(json.load(fh))
+        return Settings(), []
+    problems: list[str] = []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))  # tolerate a BOM (Notepad)
+        if not isinstance(data, dict):
+            raise ValueError("the file does not contain a settings object")
+    except (OSError, ValueError) as exc:
+        from datetime import datetime
+
+        aside = path.with_name(f"{path.name}.bad-{datetime.now().strftime('%Y%m%d-%H%M%S')}")
+        try:
+            path.replace(aside)
+            where = f"; the file was moved to {aside.name}"
+        except OSError:
+            where = ""
+        return Settings(), [f"The settings file could not be read ({exc}); default settings are used{where}."]
+    return Settings.from_dict(data, problems), problems
+
+
+def load_settings(path: Path | None = None) -> Settings:
+    return load_settings_checked(path)[0]
 
 
 def save_settings(settings: Settings, path: Path | None = None) -> None:

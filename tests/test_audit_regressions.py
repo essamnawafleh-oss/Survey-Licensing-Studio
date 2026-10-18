@@ -502,3 +502,85 @@ def test_engine_version_change_is_explained_by_reproduce(full_case):
         ws.db.execute("UPDATE calculations SET engine_version='1.0.0' WHERE id=?", (calc.id,))
     ok, detail = ws.calculations.reproduce(calc.id)
     assert not ok and "made with engine 1.0.0" in detail  # results now carry engine 1.1.0 behaviour/version
+
+
+# P5-P9, P12-P15 -- persistence, reports, UI ---------------------------------------------------------
+
+def test_p5_failed_first_save_can_be_retried(workspace):
+    from sls.persistence.cases import Case
+
+    case = Case(case_number="RETRY-1", rule_version_id="no-such-version")  # foreign key fails
+    with pytest.raises(Exception):
+        workspace.cases.save(ADMIN, case)
+    assert case.id == ""
+    case.rule_version_id = None
+    saved = workspace.cases.save(ADMIN, case)
+    assert [c.case_number for c in workspace.cases.list()] == ["RETRY-1"] and saved.id
+
+
+def test_p6_p7_p8_damaged_tampered_or_multipage_images_do_not_abort_the_report(full_case):
+    from PIL import Image
+
+    from sls.reporting.report import ReportOptions
+    from sls.services.report_service import ReportService
+
+    ws, case = full_case["ws"], full_case["case"]
+    tmp = full_case["tmp"]
+    good = tmp / "ok.png"
+    Image.new("RGB", (40, 30), "red").save(good)
+    broken = tmp / "broken.png"
+    broken.write_bytes(good.read_bytes()[:60])            # truncated after the header
+    tiff = tmp / "pages.tif"
+    Image.new("RGB", (20, 20)).save(tiff, save_all=True, append_images=[Image.new("RGB", (20, 20), "blue")])
+    ws.media.add_photo(ADMIN, case.id, broken, "broken")
+    tampered = ws.media.add_photo(ADMIN, case.id, good, "tampered")
+    ws.media.add_attachment(ADMIN, case.id, tiff, "multipage")
+    Image.new("RGB", (40, 30), "green").save(ws.files.path(tampered.file_id))  # replaced after import
+    res = ReportService(ws).preview(case.id, ReportOptions(language="en", generated_at="2026-10-18T09:00:00+00:00",
+                                                           generated_by="tester"))
+    assert res.pdf.startswith(b"%PDF")
+    text = " ".join(res.warnings)
+    assert "broken" in text and "checksum" in text
+    docs = {d["file"]: d for d in res.manifest["documents"]}
+    assert any(d["status"] == "not_included" and "pages" in d["error"] for d in docs.values())
+
+
+def test_p9_brackets_in_mixed_arabic_latin_text():
+    from sls.reporting.arabic import visual
+
+    v = visual("الارتداد الأمامي (front) = 4.00 م", "R")
+    assert "(front)" in v and v.index("4.00") < v.index("(front)")
+    assert visual("Rule (سكن) here", "L").startswith("Rule (") and visual("ABC (def) GHI", "L") == "ABC (def) GHI"
+
+
+def test_p12_cancel_does_not_attach_a_license_document(full_case, qtbot, qapp, monkeypatch, tmp_path):
+    from PySide6.QtWidgets import QFileDialog, QInputDialog
+
+    from sls.ui.dialogs.licenses_dialog import LicensesDialog
+
+    ws, case = full_case["ws"], full_case["case"]
+    doc = tmp_path / "lic.pdf"
+    doc.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    dlg = LicensesDialog(ws, case.id)
+    qtbot.addWidget(dlg)
+    dlg.list.setCurrentRow(0)
+    lic = full_case["license"]
+    before = len(ws.licenses.get(lic.id).documents)
+    monkeypatch.setattr(QFileDialog, "getOpenFileNames", lambda *a, **k: ([str(doc)], ""))
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("", False))  # Cancel
+    dlg._attach()
+    assert len(ws.licenses.get(lic.id).documents) == before
+
+
+def test_p14_p15_damaged_settings_never_block_start_up(tmp_path):
+    from sls.core.settings import load_settings_checked
+
+    path = tmp_path / "settings.json"
+    path.write_text('{"language": "en", "backup_ret', encoding="utf-8")          # truncated
+    s, problems = load_settings_checked(path)
+    assert s.language == "ar" and problems and not path.exists()
+    assert list(tmp_path.glob("settings.json.bad-*"))                            # kept aside
+    path.write_bytes(b"\xef\xbb\xbf" + b'{"language": "en", "backup_retention": "30", "setback_method": "x"}')
+    s, problems = load_settings_checked(path)                                    # BOM, wrong type, bad value
+    assert s.language == "en" and s.backup_retention == 30 and s.setback_method == "offset_corner"
+    assert len(problems) == 2
