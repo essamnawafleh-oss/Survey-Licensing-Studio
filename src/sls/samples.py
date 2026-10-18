@@ -94,3 +94,29 @@ def write_sample_rules_xlsx(path: Path, rows: list[list[object]] | None = None) 
     wb.create_sheet("Notes").append(["Values are fabricated for testing."])
     wb.save(str(path))
     return path
+
+
+SAMPLE_LAYER_ROLES = {
+    "PARCEL": ("property_boundary", ""),
+    "BLDG_GF": ("building", "G"),
+    "BLDG_1F": ("building", "1"),
+    "WALL": ("wall", ""),
+    "FENCE": ("fence", ""),
+    "ROAD": ("road", ""),
+    "NEIGHBOR": ("neighbor_parcel", ""),
+    "TEXT": ("annotation", ""),
+    "WELL": ("well", ""),
+}
+
+
+def assign_sample_roles(drawing) -> str:  # type: ignore[no-untyped-def]
+    """Assign layer roles for the synthetic survey; returns the parcel boundary entity id."""
+    for name, (role, floor) in SAMPLE_LAYER_ROLES.items():
+        if drawing.has_layer(name):
+            layer = drawing.layer(name)
+            layer.role = role
+            layer.floor_key = floor
+    return next(e.id for e in drawing.entities.values() if e.layer == "PARCEL")
+
+
+SAMPLE_EDGE_TYPES = ["front", "side", "rear", "side"]

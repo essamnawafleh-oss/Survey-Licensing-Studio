@@ -331,6 +331,14 @@ class Drawing:
     def content_hash(self) -> str:
         return hashlib.sha256(self.to_json().encode("utf-8")).hexdigest()
 
+    def source_content_hash(self) -> str:
+        """Hash of non-derived content (generated setback/violation geometry excluded)."""
+        d = self.to_dict()
+        d["entities"] = [e for e in d["entities"] if e["meta"].get("source") != "derived"]
+        d.pop("active_layer", None)
+        payload = json.dumps(d, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Drawing":
         if d.get("format") != "sls-drawing":

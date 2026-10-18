@@ -127,7 +127,7 @@ CREATE TABLE parcels (
     case_id TEXT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
     identifier TEXT NOT NULL DEFAULT '',
     boundary_entity_id TEXT NOT NULL DEFAULT '',
-    boundary_wkt TEXT NOT NULL DEFAULT '',
+    boundary_points_json TEXT NOT NULL DEFAULT '[]',  -- verified boundary snapshot (drawing units)
     edge_types_json TEXT NOT NULL DEFAULT '[]',
     verified INTEGER NOT NULL DEFAULT 0,
     verified_by TEXT NOT NULL DEFAULT '',
