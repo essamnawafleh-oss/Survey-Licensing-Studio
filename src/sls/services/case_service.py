@@ -16,7 +16,7 @@ from ..cad.dxf_io import ImportReport, import_dxf
 from ..cad.model import Drawing, Entity
 from ..core.errors import CadImportError, ValidationError
 from ..core.units import LengthUnit
-from ..engine.inputs import extract_inputs
+from ..engine.inputs import CalculationInputs, extract_inputs
 from ..engine.run import run_calculation
 from ..persistence.calculations_repo import CalculationRecord
 from ..persistence.drawings_repo import DrawingRecord, RevisionRecord
@@ -109,7 +109,7 @@ class CaseService:
 
     # -- calculation -----------------------------------------------------------------------
 
-    def run_calculation(self, case_id: str, floor_order: list[str] | None = None) -> CalculationRecord:
+    def build_inputs(self, case_id: str, floor_order: list[str] | None = None) -> CalculationInputs:
         case = self.ws.cases.get(case_id)
         loaded = self.survey_drawing(case_id)
         if loaded is None:
@@ -133,6 +133,10 @@ class CaseService:
                 "severity": "error", "code": "boundary_changed",
                 "message": "The property boundary changed after it was verified; verify it again.", "entity_id":
                 parcel.boundary_entity_id})
+        return inputs
+
+    def run_calculation(self, case_id: str, floor_order: list[str] | None = None) -> CalculationRecord:
+        inputs = self.build_inputs(case_id, floor_order)
         results = run_calculation(inputs)
         return self.ws.calculations.save(self.ws.user, case_id, inputs, results)
 

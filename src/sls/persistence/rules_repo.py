@@ -35,8 +35,7 @@ class RuleSetVersion:
 
     @property
     def label(self) -> str:
-        state = "✔" if self.verified else "⚠"
-        return f"{self.rule_set_name} v{self.version} {state} ({self.workbook_name})"
+        return f"{self.rule_set_name} v{self.version} ({self.workbook_name})"
 
 
 class RuleRepository:

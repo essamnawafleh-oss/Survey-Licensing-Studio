@@ -81,17 +81,17 @@ class LicenseRecord:
         )
 
     def completeness_issues(self) -> list[str]:
-        """Things a reviewer must look at; they are flagged, never filled in."""
+        """Translation keys for things a reviewer must look at; flagged, never filled in."""
         issues = []
         if not self.issue_date:
-            issues.append("Issue date is missing.")
+            issues.append("lic_issue.no_date")
         if not self.areas and not self.lengths:
-            issues.append("No licensed areas or lengths recorded.")
+            issues.append("lic_issue.no_quantities")
         if not self.documents:
-            issues.append("No source document attached.")
+            issues.append("lic_issue.no_document")
         floors = [a.floor_key for a in self.areas]
         if len(floors) != len(set(floors)):
-            issues.append("The same floor appears more than once in this license.")
+            issues.append("lic_issue.duplicate_floor")
         return issues
 
 

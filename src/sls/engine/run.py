@@ -110,7 +110,7 @@ def run_calculation(inputs: CalculationInputs) -> dict[str, Any]:
             out["parcel"] = {"entity_id": inputs.parcel.entity_id, "area_m2": parcel.area,
                              "perimeter_m": parcel.length, "verified": inputs.parcel_verified,
                              "wkt": _wkt(parcel, frame)}
-            trace.add("parcel_area", "Parcel area", "A = ½|Σ(xᵢ·yᵢ₊₁ − xᵢ₊₁·yᵢ)|",
+            trace.add("parcel_area", "Parcel area", "A = ½ |Σ (x_i·y_(i+1) − x_(i+1)·y_i)|  (shoelace)",
                       {"vertices": len(parcel.exterior.coords) - 1}, parcel.area, "m²", [inputs.parcel.entity_id])
             if not inputs.parcel_verified:
                 fail("parcel", "The property boundary has not been verified by a user; setbacks are not "
@@ -148,7 +148,7 @@ def run_calculation(inputs: CalculationInputs) -> dict[str, Any]:
             "buildable_wkt": _wkt(setback.buildable, frame), "zone_wkt": _wkt(setback.setback_zone, frame),
         }
         trace.add("setback", "Buildable area after setbacks",
-                  "Buildable = Parcel − ⋃ᵢ { p : dist(p, edgeᵢ) < dᵢ }",
+                  "Buildable = Parcel − union over edges i of { p : dist(p, edge_i) < d_i }",
                   {"distances_m": rule.setbacks if rule else {}, "edge_types": inputs.edge_types,
                    "rule_code": rule.code if rule else ""}, setback.buildable_area, "m²",
                   [f"rule version {inputs.rule_version_id}", f"rule row {rule.source_row}" if rule else ""],
@@ -181,7 +181,7 @@ def run_calculation(inputs: CalculationInputs) -> dict[str, Any]:
                 row["violation_wkt"] = _wkt(inter.in_setback_zone, frame)
         floor_rows.append(row)
         trace.add(f"floor_area:{fa.floor_key}", f"Measured area, floor {fa.floor_key}",
-                  "A_floor = area(⋃ outlines on floor)", {"outlines": len(fa.entity_ids),
+                  "A_floor = area(union of outlines on the floor)", {"outlines": len(fa.entity_ids),
                   "sum_of_outline_areas_m2": fa.sum_of_parts_m2}, fa.area_m2, "m²", fa.entity_ids, warns)
         issues += [{"severity": "warning", "code": "overlap", "message": w, "entity_id": ""} for w in warns]
     out["floors"] = floor_rows
@@ -198,7 +198,7 @@ def run_calculation(inputs: CalculationInputs) -> dict[str, Any]:
             plan_row["in_setback_zone_m2"] = float(viol.area)
             plan_row["violation_wkt"] = _wkt(viol, frame)
             trace.add("violation_plan", "Building plan area inside setback zone (geometric)",
-                      "area((⋃ all floors) ∩ setback zone)", {}, float(viol.area), "m²",
+                      "area(union of all floors, intersected with setback zone)", {}, float(viol.area), "m²",
                       warnings=["Geometric intersection only; not a legal determination."])
     out["plan_projection"] = plan_row
 
@@ -213,7 +213,7 @@ def run_calculation(inputs: CalculationInputs) -> dict[str, Any]:
     out["lengths"] = [{"kind": t.kind, "length_m": t.length_m, "sum_of_parts_m": t.sum_of_parts_m,
                        "overlap_m": t.overlap_m, "entity_ids": t.entity_ids} for t in lengths]
     for t in lengths:
-        trace.add(f"length:{t.kind}", f"Measured {t.kind} length", "L = length(⋃ segments)",
+        trace.add(f"length:{t.kind}", f"Measured {t.kind} length", "L = length(union of segments)",
                   {"segments": len(t.entity_ids), "sum_of_segment_lengths_m": t.sum_of_parts_m}, t.length_m, "m",
                   t.entity_ids, [f"Overlapping segments: {t.overlap_m:.2f} m counted once."] if t.overlap_m > 1e-4 else [])
 
