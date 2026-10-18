@@ -7,6 +7,7 @@ on:
   workflow_dispatch:
   push:
     branches: [claude/foundation]
+    tags: ["v*"]     # a version tag also publishes a GitHub release with Setup.exe
 
 defaults:
   run:
@@ -15,6 +16,8 @@ defaults:
 jobs:
   build-and-smoke-test:
     runs-on: windows-latest
+    permissions:
+      contents: write   # only used by the release step on version tags
     timeout-minutes: 60
     env:
       QT_QPA_PLATFORM: offscreen
@@ -140,3 +143,32 @@ jobs:
           name: SurveyLicensingStudio-Setup
           path: dist/SurveyLicensingStudio-Setup-*.exe
           if-no-files-found: warn
+
+      - name: Publish release (version tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $setup = (Get-ChildItem dist\SurveyLicensingStudio-Setup-*.exe).FullName
+          $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
+          "$hash  $(Split-Path $setup -Leaf)" | Set-Content dist\SHA256SUMS.txt -Encoding ascii
+          $tag = "${{ github.ref_name }}"
+          $notes = @"
+          Windows installer for Survey & Licensing Studio ($tag) — release candidate.
+
+          Download **$(Split-Path $setup -Leaf)**, double-click it and follow the wizard (Arabic or English,
+          chosen from the Windows display language). One administrator prompt; installs in Program Files,
+          adds Start menu and desktop shortcuts. Your data, backups and settings (%LOCALAPPDATA% / %APPDATA%)
+          are never changed or removed by installing, upgrading or uninstalling.
+
+          The installer is not code-signed: Windows SmartScreen shows "Unknown publisher" — choose
+          "More info" → "Run anyway". Verified automatically on Windows (tests, self-test, install, upgrade,
+          uninstall); a manual check on a clean machine is still recommended (docs/RELEASE_CHECKLIST.md).
+
+          SHA-256: $hash
+          "@
+          $notes | Set-Content dist\release-notes.md -Encoding utf8
+          gh release create $tag $setup dist\SHA256SUMS.txt --prerelease --title "Survey & Licensing Studio $tag (Windows installer)" --notes-file dist\release-notes.md
+          if ($LASTEXITCODE -ne 0) { Write-Output "::error::release creation failed"; exit 1 }
+          Write-Output "::notice title=release::https://github.com/${{ github.repository }}/releases/tag/$tag"
+
