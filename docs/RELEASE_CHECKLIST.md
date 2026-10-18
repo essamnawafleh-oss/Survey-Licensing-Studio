@@ -13,7 +13,7 @@ or explicitly accepted by the department.
 | Check | Status | Evidence |
 |---|---|---|
 | Full test suite, Linux, Python 3.13.16 | ✅ | 229 passed, 3 skipped (DWG fixtures ×2, AutoCAD setback references ×1) |
-| Full test suite, Windows (GitHub `windows-latest`, Python 3.12) | ✅ | [run 39157575558](https://github.com/essamnawafleh-oss/Survey-Licensing-Studio/actions/runs/39157575558). The previous run found 1 Windows-only failure (converter check, W1 in the audit report), now fixed. Skips: DWG ×2, AutoCAD references ×1, OCR ×2 (no Tesseract on the runner) |
+| Full test suite, Windows (GitHub `windows-latest`, Python 3.12) | ✅ | **227 passed, 5 skipped** ([run 39157938350](https://github.com/essamnawafleh-oss/Survey-Licensing-Studio/actions/runs/39157938350)). Skips: DWG ×2, AutoCAD references ×1, OCR ×2 (no Tesseract on the runner). An earlier run found one Windows-only failure (converter check, W1 in `AUDIT_REPORT.md`), now fixed |
 | Dependency consistency (`pip check`) on Windows | ✅ | same run |
 | Code audit and regression tests | ✅ | `AUDIT_REPORT.md`, `tests/test_audit_regressions.py` |
 | GIS refresh data-integrity tests | ✅ | `tests/test_gis_datasets.py` |
