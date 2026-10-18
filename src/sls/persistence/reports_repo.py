@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ..core.errors import ValidationError
-from .db import new_id, now_iso
+from .db import new_id
 
 if TYPE_CHECKING:
     from .users import User

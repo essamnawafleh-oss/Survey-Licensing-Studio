@@ -1,7 +1,6 @@
 """DXF import/export tests with synthetic drawings."""
 from __future__ import annotations
 
-import ezdxf
 import pytest
 
 from sls.cad.dxf_io import export_dxf, import_dxf
