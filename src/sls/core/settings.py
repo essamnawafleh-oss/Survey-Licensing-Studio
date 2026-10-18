@@ -51,6 +51,8 @@ class Settings:
     access_control_enabled: bool = False
     backup_retention: int = 30
     oda_converter_path: str = ""
+    libredwg_path: str = ""
+    default_crs: str = "EPSG:3066"  # Jordan TM (JTM)
     tesseract_path: str = ""
     sliver_area_tolerance_m2: float = 0.01
 

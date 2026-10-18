@@ -664,11 +664,50 @@ class DimTool(Tool):
             self.rubber(p, self.points + [self.canvas.cursor_world])
 
 
+class ParcelPickTool(Tool):
+    """Copy a parcel polygon from the regulatory/cadastral layers as the property-boundary candidate."""
+
+    name = "parcel"
+
+    def start_prompt(self) -> str:
+        return tr("tool.parcel.pick")
+
+    def on_point(self, pt: Pt) -> None:
+        d = self.drawing
+        if d is None or not self.layer_ok("PROPERTY_BOUNDARY" if d.has_layer("PROPERTY_BOUNDARY") else None):
+            return
+        roles = {layer.name for layer in d.layers if layer.role in ops.PARCEL_LAYER_ROLES}
+        near = self.canvas.entities_in(pt[0] - 1e-6, pt[1] - 1e-6, pt[0] + 1e-6, pt[1] + 1e-6)
+        polygons = [e for e in near if e.layer in roles and e.meta.get("source") != "derived"]
+        poly, _ = ops.find_parcel(polygons, [], pt)
+        if poly is None:
+            self.prompt(tr("tool.parcel.none"))
+            return
+        x0, y0, x1, y1 = ops.fast_bbox(poly)
+        texts = [e for e in self.canvas.entities_in(x0, y0, x1, y1) if e.kind == "text"]
+        same_source = [t for t in texts if t.meta.get("source") == poly.meta.get("source")]
+        texts = same_source or texts  # parcel numbers come from the same plan as the polygon
+        _, labels = ops.find_parcel([poly], texts, pt)
+        d.ensure_layer("PROPERTY_BOUNDARY", role="property_boundary", color="#4FC3F7", lineweight=0.5)
+        copy_ = Entity("polyline", "PROPERTY_BOUNDARY", {"points": [list(p) for p in poly.data["points"]],
+                                                          "closed": True},
+                       meta={"source": poly.meta.get("source", "regulatory"), "copied_from": poly.id,
+                             "parcel_labels": labels, **({"parcel_number": labels[0]} if len(labels) == 1 else {})})
+        self.commit(AddEntities([copy_], "pick parcel"))
+        self.canvas.selection = {copy_.id}
+        self.canvas.selectionChanged.emit()
+        if len(labels) == 1:
+            self.prompt(tr("tool.parcel.done", number=labels[0]))
+        else:
+            self.prompt(tr("tool.parcel.done_labels", labels=", ".join(labels) or "—"))
+        self.finish()
+
+
 TOOLS: dict[str, type[Tool]] = {
     "select": SelectTool, "line": LineTool, "polyline": PolylineTool, "rectangle": RectTool, "circle": CircleTool,
     "move": MoveTool, "copy": CopyTool, "rotate": RotateTool, "scale": ScaleTool, "offset": OffsetTool,
     "trim": TrimTool, "extend": ExtendTool, "erase": EraseTool, "dist": DistTool, "area": AreaTool,
-    "text": TextTool, "dimension": DimTool,
+    "text": TextTool, "dimension": DimTool, "parcel": ParcelPickTool,
 }
 
 ALIASES: dict[str, str] = {
@@ -677,7 +716,7 @@ ALIASES: dict[str, str] = {
     "CO": "copy", "CP": "copy", "COPY": "copy", "RO": "rotate", "ROTATE": "rotate", "SC": "scale", "SCALE": "scale",
     "O": "offset", "OFFSET": "offset", "TR": "trim", "TRIM": "trim", "EX": "extend", "EXTEND": "extend",
     "E": "erase", "ERASE": "erase", "DEL": "erase", "DI": "dist", "DIST": "dist", "AA": "area", "AREA": "area",
-    "T": "text", "DT": "text", "TEXT": "text", "DAL": "dimension", "DIM": "dimension", "DIMALIGNED": "dimension",
+    "PP": "parcel", "PARCEL": "parcel", "T": "text", "DT": "text", "TEXT": "text", "DAL": "dimension", "DIM": "dimension", "DIMALIGNED": "dimension",
 }
 
 

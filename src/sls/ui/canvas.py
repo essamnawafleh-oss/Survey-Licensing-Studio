@@ -9,6 +9,7 @@ from PySide6.QtGui import QBrush, QColor, QFont, QMouseEvent, QPainter, QPainter
 from PySide6.QtWidgets import QWidget
 
 from ..cad import ops
+from ..cad.ops import fast_bbox
 from ..cad.commands import UndoStack
 from ..cad.model import Drawing, Entity, arc_points, flatten_bulge_polyline
 from . import theme
@@ -16,6 +17,17 @@ from . import theme
 PICK_PX = 7
 SNAP_PX = 12
 FILL_ROLES = {"setback_violation": 90, "licensed_area": 60}
+
+
+def display_color(hex_color: str) -> QColor:
+    """Screen colour for the dark canvas: very dark colours are lightened (data is unchanged),
+    like AutoCAD's handling of black on a dark background."""
+    c = QColor(hex_color)
+    lum = 0.2126 * c.redF() + 0.7152 * c.greenF() + 0.0722 * c.blueF()
+    if lum < 0.18:
+        h, s_, light, a = c.getHsl()
+        c.setHsl(max(h, 0), s_, max(light, 165), a)
+    return c
 
 
 class CadCanvas(QWidget):
@@ -38,6 +50,7 @@ class CadCanvas(QWidget):
         self.ox = 0.0  # local origin for cached paths (precision with large coordinates)
         self.oy = 0.0
         self._cache: dict[str, tuple[int, QPainterPath]] = {}
+        self._index = None  # (STRtree, [entity ids]) rebuilt lazily after edits
         self.selection: set[str] = set()
         self.hover_id: str | None = None
         self.grid_on = True
@@ -62,6 +75,7 @@ class CadCanvas(QWidget):
         self.stack = stack
         self.selection.clear()
         self._cache.clear()
+        self._index = None
         ext = drawing.extents(only_visible=False) if drawing else None
         if ext:
             self.ox, self.oy = math.floor(ext[0]), math.floor(ext[1])
@@ -74,6 +88,7 @@ class CadCanvas(QWidget):
 
     def edited(self) -> None:
         self._cache.clear()  # entities are replaced by copies on edit/undo; rebuild paths
+        self._index = None
         if self.drawing:
             self.selection &= set(self.drawing.entities)
         self.update()
@@ -172,18 +187,19 @@ class CadCanvas(QWidget):
         view_w = QRectF(QPointF(*self._local(self.to_world(QPointF(0, self.height())))),
                         QPointF(*self._local(self.to_world(QPointF(self.width(), 0))))).normalized()
         texts: list[tuple[Entity, QColor]] = []
+        by_layer: dict[str, list[Entity]] = {}
+        for e in self.drawing.entities.values():
+            by_layer.setdefault(e.layer, []).append(e)
         for layer in self.drawing.layers:
             if not layer.visible:
                 continue
-            base = QColor(layer.color)
+            base = display_color(layer.color)
             base.setAlphaF(max(0.05, 1.0 - layer.transparency))
             dashed = layer.linetype.upper().startswith("DASH") or layer.linetype.upper().startswith("HIDDEN")
             width = max(1.0, layer.lineweight * 3.78) if self.show_lineweights else 1.0
             fill_alpha = FILL_ROLES.get(layer.role)
-            for e in self.drawing.entities.values():
-                if e.layer != layer.name:
-                    continue
-                color = QColor(e.color) if e.color else base
+            for e in by_layer.get(layer.name, ()):
+                color = display_color(e.color) if e.color else base
                 if e.kind == "text":
                     texts.append((e, color))
                     continue
@@ -356,14 +372,43 @@ class CadCanvas(QWidget):
         vis = {layer.name for layer in self.drawing.layers if layer.visible}
         return [e for e in self.drawing.entities.values() if e.layer in vis]
 
+    def _ensure_index(self):  # type: ignore[no-untyped-def]
+        if self._index is None and self.drawing is not None:
+            from shapely import STRtree, box
+
+            ids, boxes = [], []
+            for e in self.drawing.entities.values():
+                try:
+                    b = fast_bbox(e)
+                except (KeyError, ValueError, IndexError):
+                    continue
+                ids.append(e.id)
+                boxes.append(box(*b))
+            self._index = (STRtree(boxes) if boxes else None, ids)
+        return self._index
+
+    def entities_in(self, x0: float, y0: float, x1: float, y1: float) -> list[Entity]:
+        """Visible entities whose bounding box touches the world rectangle (spatial index)."""
+        if self.drawing is None:
+            return []
+        tree, ids = self._ensure_index()
+        if tree is None:
+            return []
+        from shapely import box
+
+        vis = {layer.name for layer in self.drawing.layers if layer.visible}
+        out = []
+        for i in tree.query(box(min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))):
+            e = self.drawing.entities.get(ids[int(i)])
+            if e is not None and e.layer in vis:
+                out.append(e)
+        return out
+
     def pick(self, screen_pt: QPointF) -> Entity | None:
         x, y = self.to_world(screen_pt)
         tol = PICK_PX / self.scale
         best, best_d = None, tol
-        for e in self.visible_entities():
-            bx0, by0, bx1, by1 = ops.bbox(e)
-            if x < bx0 - tol or x > bx1 + tol or y < by0 - tol or y > by1 + tol:
-                continue
+        for e in self.entities_in(x - tol, y - tol, x + tol, y + tol):
             dist = ops.hit_distance(e, x, y)
             if dist <= best_d:
                 best, best_d = e, dist
@@ -374,11 +419,10 @@ class CadCanvas(QWidget):
         xmin, xmax, ymin, ymax = min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)
         crossing = b.x() < a.x()
         out = []
-        for e in self.visible_entities():
+        for e in self.entities_in(xmin, ymin, xmax, ymax):
             bx0, by0, bx1, by1 = ops.bbox(e)
             inside = bx0 >= xmin and bx1 <= xmax and by0 >= ymin and by1 <= ymax
-            touches = not (bx1 < xmin or bx0 > xmax or by1 < ymin or by0 > ymax)
-            if inside or (crossing and touches and self._crosses(e, xmin, ymin, xmax, ymax)):
+            if inside or (crossing and self._crosses(e, xmin, ymin, xmax, ymax)):
                 out.append(e.id)
         return out
 
@@ -395,10 +439,7 @@ class CadCanvas(QWidget):
         if self.snap_on:
             tol = SNAP_PX / self.scale
             best = None
-            for e in self.visible_entities():
-                bx0, by0, bx1, by1 = ops.bbox(e)
-                if x < bx0 - tol or x > bx1 + tol or y < by0 - tol or y > by1 + tol:
-                    continue
+            for e in self.entities_in(x - tol, y - tol, x + tol, y + tol):
                 for sx, sy, kind in ops.snap_points(e):
                     dd = math.hypot(sx - x, sy - y)
                     if dd <= tol and (best is None or dd < best[0]):

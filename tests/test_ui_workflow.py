@@ -52,7 +52,7 @@ def test_workflow_via_dialogs(qtbot, workspace, sample_dxf, sample_xlsx):
     cd.survey_date.setText("2026-10-01")
     cd.unit.setCurrentIndex(cd.unit.findData("m"))
     cd.crs_kind.setCurrentIndex(cd.crs_kind.findData("local"))
-    cd.crs_id.setText("site grid")
+    cd.crs_id.setEditText("site grid")
     cd.units_verified.setChecked(True)
     cd.version.setCurrentIndex(cd.version.findData(version.id))
     cd.land_use.setCurrentIndex(cd.land_use.findData("SYN-A"))
@@ -108,6 +108,9 @@ def test_case_dialog_rejects_bad_date_and_unknown_unit_verification(qtbot, works
     cd.survey_date.setText("1/2/2026")
     cd.accept()
     cd.survey_date.setText("")
+    assert cd.unit.currentData() == "m" and cd._crs_code() == "EPSG:3066"  # JTM pre-selected, not verified
+    assert not cd.units_verified.isChecked()
+    cd.unit.setCurrentIndex(cd.unit.findData("unknown"))
     cd.units_verified.setChecked(True)  # with unit "unknown"
     cd.accept()
     assert len(errors) == 2

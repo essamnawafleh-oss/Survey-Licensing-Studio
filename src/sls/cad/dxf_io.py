@@ -52,6 +52,13 @@ class ImportReport:
     warnings: list[str] = field(default_factory=list)
     audit_fixes: list[str] = field(default_factory=list)
     restored_sls_metadata: int = 0
+    damaged_handles: list[str] = field(default_factory=list)
+    inconsistent_text_alignment: int = 0
+    converter: str = ""          # e.g. "LibreDWG 0.9.3" when imported from DWG
+    converter_messages: list[str] = field(default_factory=list)
+    crs_code: str = ""
+    crs_ok: bool | None = None   # None = not checked
+    crs_message: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -166,6 +173,11 @@ class _Importer:
                 self.flatten_to_polyline(e, layer, meta, t)
                 return
             pts = [[x, y, b] if abs(b) > 1e-12 else [x, y] for x, y, b in e.get_points("xyb")]
+            if len(pts) < 2:
+                # Damaged in the source file or by a DWG converter: reported, never silently dropped.
+                self.count(self.report.skipped, f"{t} (fewer than 2 vertices — damaged)")
+                self.report.damaged_handles.append(str(e.dxf.get("handle", "?")))
+                return
             z = e.dxf.get("elevation", 0.0)
             if z:
                 meta["elevation"] = z
@@ -217,10 +229,20 @@ class _Importer:
                 meta["multiline"] = True
             else:
                 halign = e.dxf.get("halign", 0)
-                p = e.dxf.align_point if (halign or e.dxf.get("valign", 0)) and e.dxf.hasattr("align_point") \
-                    else e.dxf.insert
                 text = e.plain_text()
                 height = e.dxf.get("height", 1.0)
+                p = e.dxf.insert
+                if (halign or e.dxf.get("valign", 0)) and e.dxf.hasattr("align_point"):
+                    a = e.dxf.align_point
+                    # For aligned text the alignment point lies within the text's own extent of
+                    # the insertion point. A far-away value is corrupt (seen in converted DWGs):
+                    # keep the insertion point and report it.
+                    limit = max(height, 1e-6) * (2 * max(len(text), 1) + 10)
+                    if math.dist((a.x, a.y), (p.x, p.y)) <= limit:
+                        p = a
+                    else:
+                        self.report.inconsistent_text_alignment += 1
+                        meta["alignment_point_ignored"] = [a.x, a.y]
                 rotation = e.dxf.get("rotation", 0.0)
                 if t == "ATTRIB":
                     meta["attribute_tag"] = e.dxf.get("tag", "")
@@ -271,11 +293,18 @@ def import_dxf(path: Path) -> tuple[Drawing, ImportReport]:
     if not path.is_file():
         raise CadImportError(f"File not found: {path}")
     try:
-        doc, auditor = recover.readfile(str(path))
+        # Fast path first; the slower recover loader is used only for damaged files.
+        doc = ezdxf.readfile(str(path))
+        auditor = doc.audit()
     except IOError as exc:
         raise CadImportError(f"Cannot read {path.name}: {exc}") from exc
-    except ezdxf.DXFStructureError as exc:
-        raise CadImportError(f"{path.name} is not a valid DXF file: {exc}") from exc
+    except (ezdxf.DXFStructureError, UnicodeDecodeError):
+        try:
+            doc, auditor = recover.readfile(str(path))
+        except IOError as exc:
+            raise CadImportError(f"Cannot read {path.name}: {exc}") from exc
+        except ezdxf.DXFStructureError as exc:
+            raise CadImportError(f"{path.name} is not a valid DXF file: {exc}") from exc
     insunits = doc.header.get("$INSUNITS")
     suggested = unit_from_insunits(insunits)
     report = ImportReport(path.name, doc.dxfversion, insunits, suggested.value)
@@ -312,6 +341,12 @@ def import_dxf(path: Path) -> tuple[Drawing, ImportReport]:
     for layout in doc.layouts:
         if not layout.is_modelspace:
             report.paperspace_entities += len(layout)
+    if report.inconsistent_text_alignment:
+        report.warnings.append(f"{report.inconsistent_text_alignment} text(s) had an alignment point far from their "
+                               "insertion point (corrupt data); the insertion point was used.")
+    if report.damaged_handles:
+        report.warnings.append(f"{len(report.damaged_handles)} polyline(s) have no usable vertices (damaged); handles: "
+                               + ", ".join(report.damaged_handles[:20]) + ("…" if len(report.damaged_handles) > 20 else ""))
     if report.paperspace_entities:
         report.warnings.append(f"{report.paperspace_entities} paper-space (layout) entities were not imported.")
     for t, n in report.skipped.items():

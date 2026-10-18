@@ -72,7 +72,7 @@ at the end of this file.
 6. **Data integrity.** Original files are never overwritten (content-hashed copies).
    Calculations are pinned to a rule version and to license record revisions.
 
-## Feature status (2026-10-18, 113 automated tests passing, 2 DWG tests skipped)
+## Feature status (2026-10-18, 121 automated tests passing, 2 skipped without local DWG fixtures)
 
 | Area | Feature | Status | Evidence / notes |
 |------|---------|--------|------------------|
@@ -108,7 +108,8 @@ at the end of this file.
 | M5 | Draft/reviewed/approved with approval blockers; revisions kept; manifest JSON | ✅ | |
 | M5 | Preview in app (QtPdf) | ✅ | |
 | — | Regulatory plan: separate CRS, extent check, control-point transformation as new revision | ✅ | `tests/test_transform.py` |
-| M6 | DWG via ODA File Converter | ⛔ unverified | adapter exists; acceptance tests skip without converter + real DWG |
+| M6 | DWG import (ODA File Converter or LibreDWG) | 🟡 | verified on the real PDTRA regulatory plan with LibreDWG 0.9.3, with documented converter losses (TD-22); ODA path and DWG writing unverified |
+| — | Jordan TM (EPSG:3066) default, coordinate checks, scale factor, lat/lon display, Pick parcel | ✅ | `tests/test_crs_jtm.py`; real plan maps to Wadi Musa |
 | M6 | Windows packaging (PyInstaller spec + build script) | 🟡 | build-tested on Linux only |
 
 ### Next steps

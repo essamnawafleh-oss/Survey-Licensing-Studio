@@ -10,8 +10,8 @@ from pathlib import Path
 import ezdxf
 from openpyxl import Workbook
 
-# Synthetic grid origin, used to exercise large-coordinate handling.
-OX, OY = 200_000.0, 1_000_000.0
+# Synthetic origin in JTM (EPSG:3066) range, exercising large coordinates and the CRS checks.
+OX, OY = 353_000.0, 355_500.0  # synthetic geometry placed at JTM-like coordinates near Wadi Musa
 
 SAMPLE_PARCEL = [(0.0, 0.0), (32.0, 0.0), (30.0, 26.0), (1.5, 25.0)]  # front edge = first edge (road side)
 SAMPLE_GROUND_FLOOR = [(2.0, 5.0), (22.0, 5.0), (22.0, 18.0), (2.0, 18.0)]  # intrudes into left side setback

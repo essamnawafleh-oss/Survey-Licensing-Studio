@@ -109,3 +109,23 @@ Each decision records context, the choice, and its consequences. Add new entries
 - Coverage, floor and FAR checks with non-plain text are `not_evaluated`, and the source text is given as the reason.
 - The column mapping is pre-filled from recognised header names, such as `ZONE_ID`, `SETBACK_FRONT` and `BUILT_UP_AREA_PERCENT`, but this is only a suggestion that the user confirms.
 - **Data handling:** the official table is not committed to the repository. Tests use synthetic tables with the same kinds of values.
+
+## TD-21 Jordan TM and the coordinate system model (refines TD-05)
+- **Context:** the authority's drawings, including the PDTRA regulatory plan (layers `PDTRA_JTM_*`), are in JTM. The plan's coordinates convert to Wadi Musa under EPSG:3066, which confirms the system.
+- **Choice:** CRSs are resolved through pyproj and the PROJ/EPSG database (offline, shipped in the build). EPSG:3066 "ED50 / Jordan TM" is the default for new cases. Its parameters come from the registry, never from hand-typed values.
+- A drawing's extents are checked against the CRS area of use at import, at units verification and in every calculation (issue `crs_extent`). This reliably catches wrong units, such as `$INSUNITS = inches` on GIS exports, and local coordinates. A failed check is only reported; no transformation is ever applied silently.
+- Areas and lengths stay grid values in the verified planar system, which is the cadastral convention. The point scale factor (PROJ `get_factors`, rounded to 1e-7 so results are reproducible) is recorded in the trace for information only.
+- The WGS 84 latitude/longitude in the status bar is display-only. It uses the datum transformation PROJ selects and is never used for any measurement.
+
+## TD-22 DWG through LibreDWG as a second converter (updates TD-04)
+- ODA's site is not reachable from the build environment. LibreDWG's `dwg2dxf` (from conda-forge here) is supported as a second converter, run as a separate program, so its GPLv3 licence does not extend to this application.
+- **Findings on the real plan with LibreDWG 0.9.3:** 144 read errors were reported. 22 polylines came through with no vertices. 20,125 TEXT entities had corrupt alignment points of about (10, 20).
+- The importer now does three things about this. It counts polylines with fewer than 2 vertices as *damaged*, with their handles. It ignores alignment points that lie implausibly far from the insertion point, counts them and records them on each entity. It copies every converter error line into the import report. Nothing is dropped silently.
+- **DWG status:** import is verified on one real file with LibreDWG, including the known losses above. Writing DWG and ODA fidelity are still unverified.
+
+## TD-23 Large drawings
+- The plan has 43,500 entities and converts to a 128 MB DXF. ezdxf's fast loader is tried first, and its recover mode is used only on failure. The import runs in a worker thread behind a progress dialog.
+- The canvas picks and snaps through a shapely STRtree spatial index, rebuilt lazily after edits. This cut pick plus snap from 4.7 s to about 0.1 s. Paint groups entities by layer, and the first paint caches all paths (about 4 s, once).
+- Very dark layer colours are lightened for display only.
+- Drawing revisions are serialised once. Integrity is checked on the stored bytes.
+- A regulatory plan is inserted only around the survey: entities whose bounds touch the survey extents plus a margin are inserted whole and unchanged.

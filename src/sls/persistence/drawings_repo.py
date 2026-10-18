@@ -1,6 +1,7 @@
 """Drawings (survey / regulatory), immutable drawing revisions and the parcel record."""
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -100,12 +101,13 @@ class DrawingRepository:
     def save_revision(self, user: "User", drawing_id: str, drawing: Drawing, note: str = "") -> RevisionRecord:
         user.require("edit_drawing")
         latest = self.latest_revision(drawing_id)
-        content_hash = drawing.content_hash()
+        text = drawing.to_json()  # serialised once; its hash is the content hash
+        content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
         if latest is not None and latest.content_sha256 == content_hash:
             return latest  # unchanged: no new revision
         rec = self.get(drawing_id)
         number = (latest.revision if latest else 0) + 1
-        data = drawing.to_json().encode("utf-8")
+        data = text.encode("utf-8")
         with self.db.transaction():
             fr = self.ws.files.add_bytes(user, data, f"drawing_r{number:04d}.slsd.json", rec.case_id,
                                          "drawing_revision")
@@ -138,9 +140,11 @@ class DrawingRepository:
     def load(self, revision_id: str) -> Drawing:
         rev = self.revision(revision_id)
         path = self.ws.files.path(rev.model_file_id)
-        drawing = Drawing.from_json(path.read_text(encoding="utf-8"))
-        if drawing.content_hash() != rev.content_sha256:
+        raw = path.read_bytes()
+        # Integrity check on the stored bytes (equivalent to the content hash, without re-serialising).
+        if hashlib.sha256(raw).hexdigest() != rev.content_sha256:
             raise ValidationError(f"Drawing revision {rev.revision} failed its integrity check.")
+        drawing = Drawing.from_json(raw.decode("utf-8"))
         return drawing
 
     # -- parcel ----------------------------------------------------------------------

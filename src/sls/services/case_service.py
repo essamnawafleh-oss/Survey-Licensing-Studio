@@ -43,15 +43,69 @@ class CaseService:
 
     # -- drawings ---------------------------------------------------------------------
 
-    def preview_import(self, path: Path) -> tuple[Drawing, ImportReport]:
+    def preview_import(self, path: Path, case_id: str | None = None) -> tuple[Drawing, ImportReport]:
         suffix = Path(path).suffix.lower()
         if suffix == ".dxf":
-            return import_dxf(path)
-        if suffix == ".dwg":
+            drawing, report = import_dxf(path)
+        elif suffix == ".dwg":
             from ..cad.dwg import import_dwg
 
-            return import_dwg(path, self.ws.settings.oda_converter_path)
-        raise CadImportError(f"Unsupported drawing format: {suffix or '(none)'}")
+            drawing, report = import_dwg(path, self.ws.settings.oda_converter_path, self.ws.settings.libredwg_path)
+        else:
+            raise CadImportError(f"Unsupported drawing format: {suffix or '(none)'}")
+        crs_code = self.ws.cases.get(case_id).units.crs_id if case_id else ""
+        self.check_drawing_crs(drawing, report, crs_code or self.ws.settings.default_crs)
+        return drawing, report
+
+    @staticmethod
+    def entities_in_window(drawing: Drawing, window: tuple[float, float, float, float]) -> list[Entity]:
+        """Entities whose bounding box intersects the window (used to take only the part of a large
+        regulatory plan that surrounds the survey). Geometry is copied unchanged."""
+        from ..cad.ops import fast_bbox
+
+        x0, y0, x1, y1 = window
+        out = []
+        for e in drawing.entities.values():
+            try:
+                b = fast_bbox(e)
+            except (KeyError, ValueError, IndexError):
+                continue
+            if b[2] >= x0 and b[0] <= x1 and b[3] >= y0 and b[1] <= y1:
+                out.append(e)
+        return out
+
+    @staticmethod
+    def check_drawing_crs(drawing: Drawing, report: ImportReport, crs_code: str) -> None:
+        """Check the drawing's coordinates against the case's coordinate system.
+
+        If they fall inside the system's area of use when read in its own unit (metres for
+        JTM), that unit is *suggested* even when the file header declares something else
+        (GIS exports often declare inches). Nothing is moved and nothing is verified here.
+        """
+        from dataclasses import replace
+
+        from ..core.crs import CrsUnavailable, check_extents, describe
+
+        ext = drawing.extents(only_visible=False)
+        if not crs_code or ext is None:
+            return
+        try:
+            info = describe(crs_code)
+        except CrsUnavailable:
+            report.crs_code, report.crs_message = crs_code, f"{crs_code} is not in the PROJ database; not checked."
+            return
+        if info.kind != "projected" or info.unit != "metre":
+            return
+        check = check_extents(crs_code, ext, 1.0)
+        report.crs_code, report.crs_ok, report.crs_message = crs_code, check.ok, check.message
+        declared = drawing.units.unit
+        if check.ok:
+            if declared is not LengthUnit.METER:
+                report.warnings.insert(0, f"The file header declares '{declared.value}', but the coordinates match "
+                                          f"{info.name} in metres. Metres are suggested (verify in Case details).")
+            drawing.units = replace(drawing.units, unit=LengthUnit.METER, verified=False, crs_id=crs_code)
+        else:
+            report.warnings.insert(0, check.message)
 
     def import_drawing(self, case_id: str, path: Path, role: str = "survey", drawing: Drawing | None = None,
                        report: ImportReport | None = None, keep_source_copy: bool = True,
@@ -66,7 +120,8 @@ class CaseService:
                 if not drawing.has_layer(layer.name):
                     drawing.add_layer(layer)
         case = self.ws.cases.get(case_id)
-        if case.units.unit is LengthUnit.UNKNOWN and drawing.units.unit is not LengthUnit.UNKNOWN and role == "survey":
+        if role == "survey" and drawing.units.unit is not LengthUnit.UNKNOWN and (
+                case.units.unit is LengthUnit.UNKNOWN or (not case.units.verified and case.units.unit != drawing.units.unit)):
             # Suggested units are copied but remain UNVERIFIED until a user confirms them.
             from dataclasses import replace
 

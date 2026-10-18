@@ -28,6 +28,13 @@ class ImportPreviewDialog(QDialog):
         if report.extents:
             x0, y0, x1, y1 = report.extents
             info.addRow(tr("import.extents"), QLabel(f"X {x0:,.3f} … {x1:,.3f}   Y {y0:,.3f} … {y1:,.3f}"))
+        if report.crs_message:
+            crs_lbl = QLabel(("✓ " if report.crs_ok else "⚠ ") + report.crs_message)
+            crs_lbl.setWordWrap(True)
+            crs_lbl.setObjectName("ok" if report.crs_ok else "error")
+            info.addRow(tr("import.crs_check"), crs_lbl)
+        if report.converter:
+            info.addRow(tr("import.converter"), QLabel(report.converter))
         lay.addLayout(info)
         split = QSplitter(Qt.Horizontal)
         left = QWidget()
@@ -40,7 +47,8 @@ class ImportPreviewDialog(QDialog):
         ll.addWidget(QLabel(tr("import.accounting")))
         ll.addWidget(counts)
         warn = QListWidget()
-        for w in report.warnings + [f"[audit] {f}" for f in report.audit_fixes]:
+        for w in report.warnings + [f"[audit] {f}" for f in report.audit_fixes] + \
+                [f"[converter] {m}" for m in report.converter_messages if m.upper().startswith("ERROR")]:
             warn.addItem(w)
         ll.addWidget(QLabel(tr("import.warnings", n=len(report.warnings))))
         ll.addWidget(warn)

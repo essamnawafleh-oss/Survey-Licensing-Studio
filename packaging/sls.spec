@@ -3,6 +3,8 @@
 # The bundled fonts are SIL OFL 1.1; their licence files are shipped alongside.
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_data_files
+
 ROOT = Path(SPECPATH).parent
 SRC = ROOT / "src"
 
@@ -12,6 +14,8 @@ a = Analysis(
     datas=[
         (str(SRC / "sls" / "resources" / "fonts"), "sls/resources/fonts"),
         (str(SRC / "sls" / "resources" / "i18n"), "sls/resources/i18n"),
+        *collect_data_files("pyproj"),  # PROJ database (proj.db) for EPSG:3066 / JTM, offline
+        *([(str(ROOT / "tools"), "tools")] if (ROOT / "tools").is_dir() else []),  # optional bundled LibreDWG
     ],
     hiddenimports=["PySide6.QtPdf", "PySide6.QtPdfWidgets", "bidi.algorithm", "xlrd"],
     excludes=["PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.Qt3DCore", "tkinter"],

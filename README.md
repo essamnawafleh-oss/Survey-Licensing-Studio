@@ -151,13 +151,46 @@ change is undoable.
 - Changes to cases, units, rules, boundaries, licenses, calculations and reports are written
   to the `audit_log` table.
 
+## Coordinate system: Jordan TM (JTM)
+
+New cases use **EPSG:3066 "ED50 / Jordan TM"** by default, taken from the EPSG registry in
+PROJ. That is Transverse Mercator, central meridian 37°E, scale factor 0.9998, false easting
+500 000 m, false northing −3 000 000 m, International 1924 ellipsoid. Another system can be
+chosen in *Case details*.
+- **At import:** the drawing's coordinates are checked against Jordan, the area of use of
+  JTM. GIS exports often declare *inches* in the DXF/DWG header. When the coordinates fit JTM
+  in metres, metres are **suggested**, and you still verify them. Drawings in local
+  coordinates or other units fail the check and are reported. Nothing is moved.
+- **Status bar:** shows JTM E/N, and an approximate WGS 84 latitude/longitude for
+  orientation only.
+- **Calculations:** use JTM grid coordinates. The trace records the point scale factor at
+  the site (≈ 1.00006 at Wadi Musa, so ellipsoidal areas differ by about 0.013%) for
+  information. If the coordinates fall outside the CRS area of use, the calculation is
+  flagged.
+- **Pick parcel** (`PP`): after inserting the regulatory plan around the survey, click
+  inside a parcel to copy its polygon to `PROPERTY_BOUNDARY`, together with the parcel
+  number found inside it. Then classify the edges and verify, as usual.
+
 ## DWG
 
-ezdxf does not read or write DWG. DWG files are converted through the external ODA File
-Converter, if installed, and then imported as DXF. The original DWG is kept. **This has not
-been verified:** the acceptance tests in `tests/test_dwg_acceptance.py` need the converter
-and real DWG files in `tests/fixtures/dwg/`, and skip until both exist. Full-fidelity native
-DWG would need the commercial ODA Drawings SDK (see `TECHNICAL_DECISIONS.md`, TD-04).
+ezdxf does not read DWG. DWG files are converted to DXF by an external converter and then
+go through the normal import with full entity accounting. The original DWG is kept.
+1. **ODA File Converter** (free, from the Open Design Alliance) is preferred: it has the
+   best fidelity and can also write DWG.
+2. **LibreDWG `dwg2dxf`** (GNU GPLv3, run as a separate program) is the alternative.
+
+Tested on the PDTRA regulatory plan (AutoCAD 2018 DWG, 21 MB, 43,500 entities) with LibreDWG
+0.9.3. All layers, 23,379 parcel/road/wadi polylines and 20,127 parcel numbers came through
+in JTM. The converter reported 144 read errors:
+- 22 large polylines arrived without vertices and are listed as *damaged* in the import
+  report.
+- Every parcel-number text had a corrupt alignment point; this is detected and the
+  insertion point is used.
+
+A newer LibreDWG (0.13) or ODA should reduce these losses. Always compare damaged items with
+the source in AutoCAD. The acceptance tests (`tests/test_dwg_acceptance.py`) run against real
+DWGs kept outside the repository (`SLS_DWG_FIXTURES`, `SLS_LIBREDWG`, `SLS_ODA_CONVERTER`).
+Writing DWG still needs ODA.
 
 ## Development
 

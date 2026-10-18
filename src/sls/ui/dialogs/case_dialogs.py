@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import re
 
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QCheckBox, QMessageBox, QComboBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
                                QLineEdit, QPlainTextEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget)
 
 from ...core.i18n import current_language, tr
+from ...core.crs import PRESETS, CrsUnavailable, check_extents, describe
 from ...core.units import CrsKind, DrawingUnits, LengthUnit
 from ...persistence.cases import CASE_STATUSES, Case
 from ...persistence.workspace import Workspace
@@ -79,8 +80,13 @@ class CaseDialog(QDialog):
         for u in LengthUnit:
             self.unit.addItem(tr(f"unit_name.{u.value}"), u.value)
         self.unit.setCurrentIndex([u for u in LengthUnit].index(self.case.units.unit))
-        self.crs_id = QLineEdit(self.case.units.crs_id)
-        self.crs_id.setPlaceholderText(tr("case.crs_hint"))
+        self.crs_id = QComboBox()
+        self.crs_id.setEditable(True)
+        for code, name in PRESETS:
+            self.crs_id.addItem(f"{code} — {name}", code)
+        self.crs_id.lineEdit().setPlaceholderText(tr("case.crs_hint"))
+        self.crs_info = QLabel()
+        self.crs_info.setWordWrap(True)
         self.crs_kind = QComboBox()
         for k in CrsKind:
             self.crs_kind.addItem(tr(f"crs_kind.{k.value}"), k.value)
@@ -93,6 +99,7 @@ class CaseDialog(QDialog):
         hint.setObjectName("warning")
         f3.addRow(tr("case.units"), self.unit)
         f3.addRow(tr("case.crs_id"), self.crs_id)
+        f3.addRow("", self.crs_info)
         f3.addRow(tr("case.crs_kind"), self.crs_kind)
         f3.addRow("", self.units_verified)
         if self.case.units.verified_by:
@@ -100,7 +107,15 @@ class CaseDialog(QDialog):
         f3.addRow(hint)
         for w in (self.unit, self.crs_kind):
             w.currentIndexChanged.connect(lambda _=None: self.units_verified.setChecked(False))
-        self.crs_id.textEdited.connect(lambda _=None: self.units_verified.setChecked(False))
+        initial = self.case.units.crs_id
+        if not self.case.id and not initial:
+            # New case: the department's system (JTM by default) is pre-selected but NOT verified.
+            initial = ws.settings.default_crs
+            if self.case.units.unit is LengthUnit.UNKNOWN:
+                self.unit.setCurrentIndex([u for u in LengthUnit].index(LengthUnit.METER))
+        self._set_crs_text(initial)
+        self._on_crs()
+        self.crs_id.currentTextChanged.connect(lambda _=None: (self.units_verified.setChecked(False), self._on_crs()))
         lay.addWidget(g3)
 
         g4 = QGroupBox(tr("case.group.landuse"))
@@ -122,6 +137,47 @@ class CaseDialog(QDialog):
         lay.addWidget(g4)
         self._load_codes()
         outer.addWidget(ok_cancel(self))
+
+    def _set_crs_text(self, code: str) -> None:
+        idx = self.crs_id.findData(code)
+        if idx >= 0:
+            self.crs_id.setCurrentIndex(idx)
+        else:
+            self.crs_id.setEditText(code)
+
+    def _crs_code(self) -> str:
+        text = self.crs_id.currentText().strip()
+        idx = self.crs_id.findText(text)
+        return self.crs_id.itemData(idx) if idx >= 0 else text
+
+    def _on_crs(self) -> None:
+        code = self._crs_code()
+        if not code:
+            self.crs_info.setText("")
+            return
+        try:
+            info = describe(code)
+        except CrsUnavailable:
+            self.crs_info.setText(tr("case.crs_unknown"))
+            self.crs_info.setObjectName("muted")
+            return
+        kind = {"projected": CrsKind.PROJECTED, "geographic": CrsKind.GEOGRAPHIC}.get(info.kind)
+        if kind is not None:
+            self.crs_kind.setCurrentIndex([k for k in CrsKind].index(kind))
+        if info.kind == "projected" and info.unit == "metre":
+            self.unit.setCurrentIndex([u for u in LengthUnit].index(LengthUnit.METER))
+        self.crs_info.setText(tr("case.crs_described", name=info.name, unit=info.unit, area=info.area_name))
+        self.crs_info.setObjectName("ok" if info.kind == "projected" else "error")
+        self.crs_info.style().polish(self.crs_info)
+
+    def _survey_extents(self):  # type: ignore[no-untyped-def]
+        if not self.case.id:
+            return None
+        drawings = self.ws.drawings.for_case(self.case.id, "survey")
+        if not drawings:
+            return None
+        rev = self.ws.drawings.latest_revision(drawings[-1].id)
+        return self.ws.drawings.load(rev.id).extents(only_visible=False) if rev else None
 
     def _load_codes(self) -> None:
         self.land_use.blockSignals(True)
@@ -193,7 +249,18 @@ class CaseDialog(QDialog):
                 fields[key] = v.strip()
         c.fields = fields
         verified = self.units_verified.isChecked()
-        new_units = DrawingUnits(LengthUnit(self.unit.currentData()), verified, self.crs_id.text().strip(),
+        crs_code = self._crs_code()
+        if verified and not c.units.verified and crs_code:
+            ext = self._survey_extents()
+            try:
+                check = check_extents(crs_code, ext, LengthUnit(self.unit.currentData()).to_meter) if ext else None
+            except (CrsUnavailable, Exception):  # noqa: BLE001 - unknown/local system: nothing to check
+                check = None
+            if check is not None and not check.ok and QMessageBox.question(
+                    self, tr("case.units"), check.message + "\n\n" + tr("case.verify_anyway"),
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
+        new_units = DrawingUnits(LengthUnit(self.unit.currentData()), verified, crs_code,
                                  CrsKind(self.crs_kind.currentData()),
                                  (self.ws.user.username if verified and not c.units.verified else c.units.verified_by)
                                  if verified else "")

@@ -91,6 +91,7 @@ def run_calculation(inputs: CalculationInputs) -> dict[str, Any]:
     trace.add("units", "Drawing units", "metres = drawing units × factor", {"unit": units.unit.value,
               "crs": units.crs_id, "crs_kind": units.crs_kind.value}, factor, "m / drawing unit",
               [f"verified by {units.verified_by or 'user'}"])
+    _crs_checks(inputs, all_pts, factor, issues, trace, out)
     if any(s.approximated for s in inputs.footprints + inputs.linear) or (inputs.parcel and inputs.parcel.approximated):
         issues.append({"severity": "warning", "code": "curves_approximated",
                        "message": "Curved geometry (arcs, circles, splines) was sampled at 256 segments per full "
@@ -278,6 +279,43 @@ def run_calculation(inputs: CalculationInputs) -> dict[str, Any]:
     out["issues"] = issues
     out["trace"] = trace.steps
     return _round(out)
+
+
+def _crs_checks(inputs: CalculationInputs, pts: list, factor: float, issues: list, trace: Trace,  # type: ignore[type-arg]
+                out: dict[str, Any]) -> None:
+    """Check coordinates against the case CRS and record the projection scale factor.
+
+    Results are informational: areas are grid areas in the verified planar system.
+    """
+    code = inputs.drawing_units.crs_id
+    if not code or not pts:
+        return
+    from ..core.crs import CrsUnavailable, check_extents, describe, scale_factor
+
+    try:
+        info = describe(code)
+    except CrsUnavailable:
+        return
+    if info.kind != "projected":
+        return
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    check = check_extents(code, (min(xs), min(ys), max(xs), max(ys)), factor)
+    out["crs"] = {"code": code, "name": info.name, "inside_area_of_use": check.ok}
+    if not check.ok:
+        issues.append({"severity": "error", "code": "crs_extent", "message": check.message, "entity_id": ""})
+        return
+    cx, cy = (min(xs) + max(xs)) / 2 * factor, (min(ys) + max(ys)) / 2 * factor
+    k = scale_factor(code, cx / (info.unit_to_m or 1.0), cy / (info.unit_to_m or 1.0))
+    if k is None:
+        return
+    k = round(k, 7)
+    out["crs"]["scale_factor"] = k
+    trace.add("crs", f"Coordinate system {info.name}", "ellipsoidal area ≈ grid area ÷ k²",
+              {"code": code, "point_scale_factor_k": k}, round((1 / (k * k) - 1) * 100, 5), "% difference",
+              [f"{info.name} ({code}) from the EPSG registry (PROJ)"],
+              ["All areas and lengths in this calculation are grid values in the verified planar system; "
+               "the projection difference shown is for information only."])
 
 
 def _eligibility(rule, parcel, plan, total_measured, floors, setback, plan_row, trace) -> dict[str, Any]:  # type: ignore[no-untyped-def]

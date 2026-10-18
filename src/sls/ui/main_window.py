@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
-from PySide6.QtWidgets import (QDockWidget, QFileDialog, QLabel, QMainWindow, QMessageBox, QToolBar,
+from PySide6.QtWidgets import (QApplication, QDockWidget, QFileDialog, QLabel, QMainWindow, QMessageBox, QToolBar,
                                QWidget)
 
 from ..cad.commands import ReplaceEntities, UndoStack
@@ -50,6 +50,7 @@ class MainWindow(QMainWindow):
         self._dock(tr("dock.command"), self.cmd, Qt.BottomDockWidgetArea)
 
         self.status_coords = QLabel()
+        self._cursor_crs = ""
         self.status_tool = QLabel()
         self.status_layer = QLabel()
         self.status_units = QLabel()
@@ -174,7 +175,7 @@ class MainWindow(QMainWindow):
         self.addToolBar(tb_mod)
         tb_meas = QToolBar(tr("tb.measure"))
         tb_meas.setObjectName("tb_measure")
-        for name in ("dist", "area"):
+        for name in ("dist", "area", "parcel"):
             tb_meas.addAction(self._tool_action(name))
         tb_meas.addAction(self._find_or_make("act.zoom_extents", self.canvas.zoom_extents))
         self.addToolBar(tb_meas)
@@ -233,10 +234,15 @@ class MainWindow(QMainWindow):
 
     def _update_status(self) -> None:
         d = self.canvas.drawing
+        self._cursor_crs = ""
+        if self.case_id:
+            u = self.ws.cases.get(self.case_id).units
+            if u.crs_id and u.crs_kind.value == "projected" and u.unit.value == "m":
+                self._cursor_crs = u.crs_id
         self.status_layer.setText(f"{tr('status.layer')}: {d.active_layer}" if d else "")
         if self.case_id:
             u = self.ws.cases.get(self.case_id).units
-            txt = f"{tr('status.units')}: {tr('unit_name.' + u.unit.value)}"
+            txt = f"{tr('status.units')}: {tr('unit_name.' + u.unit.value)}" + (f" · {u.crs_id}" if u.crs_id else "")
             txt += " ✓" if u.verified else f" ({tr('props.units_unverified')})"
             self.status_units.setText(txt)
         else:
@@ -247,7 +253,18 @@ class MainWindow(QMainWindow):
         self.status_user.setText(f"{self.ws.user.display_name} ({tr('users.role.' + self.ws.user.role)})")
 
     def _on_cursor(self, x: float, y: float) -> None:
-        self.status_coords.setText(f"X {x:,.3f}   Y {y:,.3f}")
+        text = f"E {x:,.3f}   N {y:,.3f}"
+        code = self._cursor_crs
+        if code:
+            try:
+                from ..core.crs import to_lonlat
+
+                lon, lat = to_lonlat(code, x, y)
+                if -90 <= lat <= 90:
+                    text += f"   ≈ {lat:.6f}°N {lon:.6f}°E (WGS 84)"
+            except Exception:  # noqa: BLE001 - display only; never affects data
+                pass
+        self.status_coords.setText(text)
 
     def _on_tool(self, name: str) -> None:
         self.status_tool.setText(f"{tr('status.tool')}: {tr('tool_name.' + name)}")
@@ -354,7 +371,8 @@ class MainWindow(QMainWindow):
         from .dialogs.import_dialog import ImportPreviewDialog
 
         try:
-            drawing, report = self.service.preview_import(Path(path))
+            drawing, report = self.run_busy(tr("app.importing", name=Path(path).name),
+                                            lambda: self.service.preview_import(Path(path), self.case_id))
         except Exception as exc:  # noqa: BLE001
             show_error(self, exc)
             return
@@ -366,7 +384,8 @@ class MainWindow(QMainWindow):
         if role == "survey" and not self._confirm_discard():
             return
         try:
-            loaded = self.service.import_drawing(self.case_id, Path(path), role, drawing, report, dlg.keep.isChecked())
+            loaded = self.run_busy(tr("app.saving_import"), lambda: self.service.import_drawing(
+                self.case_id, Path(path), role, drawing, report, dlg.keep.isChecked()))
         except Exception as exc:  # noqa: BLE001
             show_error(self, exc)
             return
@@ -378,6 +397,35 @@ class MainWindow(QMainWindow):
             self.cmd.message(tr("app.verify_units_hint"), "warn")
         else:
             self.cmd.message(tr("app.regulatory_imported"), "info")
+
+    def run_busy(self, label: str, fn):  # type: ignore[no-untyped-def]
+        """Run ``fn`` in a worker thread with a modal busy dialog; re-raises its exception."""
+        import threading
+
+        from PySide6.QtCore import QEventLoop
+        from PySide6.QtWidgets import QProgressDialog
+
+        result: dict[str, object] = {}
+
+        def work() -> None:
+            try:
+                result["value"] = fn()
+            except BaseException as exc:  # noqa: BLE001 - re-raised in the UI thread below
+                result["error"] = exc
+
+        dlg = QProgressDialog(label, "", 0, 0, self)
+        dlg.setCancelButton(None)
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setMinimumDuration(300)
+        thread = threading.Thread(target=work, daemon=True)
+        thread.start()
+        while thread.is_alive():
+            QApplication.processEvents(QEventLoop.AllEvents, 50)
+            thread.join(0.05)
+        dlg.close()
+        if "error" in result:
+            raise result["error"]  # type: ignore[misc]
+        return result.get("value")
 
     def new_drawing(self) -> None:
         if not self._confirm_discard():
@@ -424,7 +472,13 @@ class MainWindow(QMainWindow):
                 != QMessageBox.Yes:
             return
         added = []
+        margin = max(a[2] - a[0], a[3] - a[1], 50.0)  # include the surroundings (at least 50 drawing units)
+        window = (a[0] - margin, a[1] - margin, a[2] + margin, a[3] + margin)
+        subset = self.service.entities_in_window(reg.drawing, window)
+        used_layers = {e.layer for e in subset}
         for layer in reg.drawing.layers:
+            if layer.name not in used_layers:
+                continue
             name = f"REG_{layer.name}"
             if not self.canvas.drawing.has_layer(name):
                 nl = copy.deepcopy(layer)
@@ -432,11 +486,13 @@ class MainWindow(QMainWindow):
                 nl.role = layer.role if layer.role in ("road", "neighbor_parcel", "property_boundary") else "reference"
                 nl.source_name = f"{regs[-1].name}:{layer.name}"
                 self.canvas.drawing.add_layer(nl)
-        for e in reg.drawing.entities.values():
+        for e in subset:
             c = e.clone(new_id=True)
             c.layer = f"REG_{e.layer}"
-            c.meta = {**c.meta, "source": "regulatory", "regulatory_drawing_id": regs[-1].id}
+            c.meta = {**c.meta, "source": "regulatory", "regulatory_drawing_id": regs[-1].id,
+                      "regulatory_entity_id": e.id}
             added.append(c)
+        self.cmd.message(tr("reg.subset", n=len(subset), total=len(reg.drawing.entities)), "info")
         from ..cad.commands import AddEntities
 
         self.stack.push(AddEntities(added, "insert regulatory reference"))
@@ -725,6 +781,7 @@ class MainWindow(QMainWindow):
         """Synthetic demonstration case. Verification steps are deliberately left to the user."""
         if not self._confirm_discard():
             return
+        from ..core.units import CrsKind, DrawingUnits, LengthUnit
         from ..persistence.cases import Case
         from ..rules.excel_rules import ColumnMapping
         from ..samples import SAMPLE_RULE_MAPPING, assign_sample_roles, write_sample_dxf, write_sample_rules_xlsx
@@ -741,6 +798,7 @@ class MainWindow(QMainWindow):
             case = self.ws.cases.save(self.ws.user, Case(
                 case_number=number, parcel_identifier="SYN-PLOT-123", surveyor=self.ws.user.display_name,
                 notes=tr("demo.notes"), rule_version_id=version.id if version else None,
+                units=DrawingUnits(LengthUnit.METER, False, self.ws.settings.default_crs, CrsKind.PROJECTED),
                 land_use_code="SYN-B" if version else ""))
             drawing, report = self.service.preview_import(dxf)
             boundary = assign_sample_roles(drawing)
@@ -759,7 +817,7 @@ class MainWindow(QMainWindow):
         from ..cad.dwg import dwg_status
 
         QMessageBox.information(self, tr("act.limitations"), tr("help.limitations") + "\n\n" +
-                                dwg_status(self.ws.settings.oda_converter_path))
+                                dwg_status(self.ws.settings.oda_converter_path, self.ws.settings.libredwg_path))
 
     def show_about(self) -> None:
         from .. import __version__

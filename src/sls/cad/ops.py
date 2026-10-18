@@ -47,6 +47,26 @@ def bbox(e: Entity) -> tuple[float, float, float, float]:
     return shapely_of(e).bounds
 
 
+def fast_bbox(e: Entity) -> tuple[float, float, float, float]:
+    """Cheap bounding box from vertices (arcs/bulges padded by the radius where known)."""
+    d = e.data
+    if e.kind in ("circle", "arc"):
+        cx, cy = d["center"]
+        r = d["radius"]
+        return cx - r, cy - r, cx + r, cy + r
+    if e.kind == "text":
+        return bbox(e)
+    pts = e.vertices()
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    pad = 0.0
+    if e.kind == "polyline" and any(len(p) > 2 and p[2] for p in d["points"]):
+        pad = max(max(xs) - min(xs), max(ys) - min(ys)) * 0.5  # bulge arcs can bow outside the vertices
+    if e.kind == "dimension":
+        pad = abs(d.get("offset", 0.0))
+    return min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad
+
+
 def hit_distance(e: Entity, x: float, y: float) -> float:
     if e.kind == "text":
         x0, y0, x1, y1 = bbox(e)
@@ -281,3 +301,32 @@ def polygon_area(points: Sequence[Pt]) -> tuple[float, bool]:
     area = abs(0.5 * sum(points[i][0] * points[(i + 1) % n][1] - points[(i + 1) % n][0] * points[i][1]
                          for i in range(n)))
     return area, Polygon(points).is_valid
+
+
+# Layers a parcel can be picked from (the case's own property boundary is excluded).
+PARCEL_LAYER_ROLES = ("parcel", "neighbor_parcel", "reference")
+
+
+def find_parcel(polygons: Sequence[Entity], texts: Sequence[Entity], pt: Pt) -> tuple[Entity | None, list[str]]:
+    """Smallest closed polygon containing ``pt`` and the label texts that lie inside it.
+
+    Labels are returned (not interpreted): if there is not exactly one, the user decides.
+    """
+    best: tuple[float, Entity] | None = None
+    best_poly: Polygon | None = None
+    for e in polygons:
+        if not e.is_closed_shape() or e.kind != "polyline":
+            continue
+        pts = flatten_bulge_polyline(e.data["points"], True, 64)
+        if len(pts) < 3:
+            continue
+        poly = Polygon(pts)
+        if not poly.is_valid or not poly.contains(Point(pt)):
+            continue
+        if best is None or poly.area < best[0]:
+            best, best_poly = (poly.area, e), poly
+    if best is None or best_poly is None:
+        return None, []
+    labels = [t.data.get("text", "").strip() for t in texts
+              if t.kind == "text" and t.data.get("text", "").strip() and best_poly.contains(Point(t.data["position"]))]
+    return best[1], labels
