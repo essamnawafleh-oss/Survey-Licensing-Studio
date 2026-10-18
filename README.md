@@ -27,10 +27,30 @@ All processing is offline: no survey geometry or document ever leaves the workst
      Mannheim Windows build). Set its path under *File → Settings*. OCR text is always stored
      as **unverified** and never fills any value.
 
-**Packaging:** `packaging\build_windows.ps1` runs the tests and builds a one-folder
-executable with PyInstaller (`dist\SurveyLicensingStudio\SurveyLicensingStudio.exe`). The
-spec was build-tested on Linux and the frozen executable starts there. Building and testing
-it on Windows is still to do.
+**Packaging:** `packaging\build_windows.ps1` builds a one-folder executable with PyInstaller.
+It stops at the first failing step: dependency check, test suite, build, then a self-test of the
+frozen build. The result is two executables in `dist\SurveyLicensingStudio\`:
+- `SurveyLicensingStudio.exe`, the windowed application;
+- `SurveyLicensingStudio-console.exe`, for `backup`, `restore`, `create-admin` and `self-test`.
+
+The GitHub Actions workflow `.github/workflows/windows-release-candidate.yml` runs the same build
+on Windows and repeats the self-test under an empty user profile. See
+[`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md) for what has been verified and what
+still needs a manual check on a clean Windows machine.
+
+**Self-test:** `SurveyLicensingStudio-console.exe self-test` (or `python -m sls self-test`)
+checks a copy of the program offline, on temporary synthetic data:
+- resources, fonts and Arabic text;
+- PROJ (JTM);
+- SQLite migrations, backup and restore;
+- DXF round trip;
+- a full calculation and the Arabic PDF report;
+- GIS staging, activation and rollback;
+- QtPdf;
+- whether the optional DWG/OCR converters are present.
+
+Network access is blocked during the run, and any attempt fails the test. The user's data is not
+modified.
 
 ## Data locations
 
@@ -41,6 +61,12 @@ it on Windows is still to do.
 | Case files | `data\cases\<case-id>\{drawing_source, drawing_revision, license_doc, photo, attachment, report}` |
 | Rule workbooks | `data\shared\rule_workbook\` |
 | Backups | `data\backups\` |
+
+| Diagnostic log | `%LOCALAPPDATA%\SurveyLicensingStudio\logs\sls.log` (rotating; override `SLS_LOG_DIR`). Records start-up details and every uncaught error, but no survey data |
+
+User data and settings live outside the installation folder. Installing a new version over or
+beside an old one therefore never touches them. A newer schema is migrated automatically, after
+a pre-migration backup. A database from a *newer* version is refused, not opened.
 
 Imported files are **copied** into the store with a SHA-256 prefix. Originals are never
 modified, and stored files are never overwritten.
@@ -192,6 +218,23 @@ change is undoable.
 - Changes to cases, units, rules, boundaries, licenses, calculations and reports are written
   to the `audit_log` table.
 
+## GIS data management (import / refresh / rollback)
+
+*File → GIS data management* handles parcels, roads, land-use zoning and rule workbooks.
+1. **Staged import.** An import first validates and stages a new version; the active one is
+   untouched. The import is refused when sidecars are missing, and when a `.prj` is missing or
+   unrecognised unless the coordinate system is declared. Field mapping, a progress dialog and
+   Cancel are available.
+2. **Comparison.** The staged version is compared with the active one: counts, added and removed
+   records, changed geometry, attributes and identifiers, suspicious geometry changes, and CRS or
+   mapping changes.
+3. **Activation.** Activation is explicit and atomic, and audited. Rollback re-activates the
+   previous version.
+4. **History.** Calculations record the dataset versions they used, and nothing is recalculated
+   automatically.
+
+Full guide: [`docs/GIS_DATA_REFRESH.md`](docs/GIS_DATA_REFRESH.md).
+
 ## Parcel register (GIS parcel layer)
 
 *File → Parcel register* imports the authority's parcel layer as an Esri Shapefile (`.shp`,
@@ -267,7 +310,27 @@ in JTM. The converter reported 144 read errors:
   insertion point is used.
 
 A newer LibreDWG (0.13) or ODA should reduce these losses. Always compare damaged items with
-the source in AutoCAD. The acceptance tests (`tests/test_dwg_acceptance.py`) run against real
+the source in AutoCAD.
+
+**The import report is actionable.** Besides the per-type counts (imported, approximated,
+expanded, skipped), it lists what to check:
+- comparison with the source DWG in AutoCAD, with the converter's read errors;
+- damaged polylines and texts with corrupt alignment, by handle;
+- unsupported types (HATCH fills, 3D faces, solids, meshes) that must be redrawn or exploded;
+- approximated curves;
+- paper-space content that is not imported;
+- undeclared units;
+- copies with duplicated ids.
+
+The original file is never modified.
+
+**DWG is not claimed to be faithful.** A conversion completing does not make it so. For real
+acceptance, convert the authority's drawings and compare them against the source in AutoCAD:
+1. layer list and entity counts per layer against the import report;
+2. a few known coordinates;
+3. every item the report lists as damaged.
+
+Record the result before relying on DWG input. The acceptance tests (`tests/test_dwg_acceptance.py`) run against real
 DWGs kept outside the repository (`SLS_DWG_FIXTURES`, `SLS_LIBREDWG`, `SLS_ODA_CONVERTER`).
 Writing DWG still needs ODA.
 

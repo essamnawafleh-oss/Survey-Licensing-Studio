@@ -74,7 +74,9 @@ at the end of this file.
 6. **Data integrity.** Original files are never overwritten (content-hashed copies).
    Calculations are pinned to a rule version and to license record revisions.
 
-## Feature status (2026-10-18, 171 automated tests passing, 3 skipped without local DWG fixtures / AutoCAD setback references)
+## Feature status (2026-10-18, 227 automated tests passing, 3 skipped without local DWG fixtures / AutoCAD setback references)
+
+Audit findings, fixes and open risks: [`AUDIT_REPORT.md`](AUDIT_REPORT.md). Release status: [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md).
 
 | Area | Feature | Status | Evidence / notes |
 |------|---------|--------|------------------|
@@ -117,7 +119,11 @@ at the end of this file.
 | — | Setback construction preview: step layers (offsets, trim/extend, intersections, discarded faces, buildable), classified diagnostics, review gate before area, reviewer approval with fingerprint invalidation, derived construction layers | ✅ | `tests/test_setback_construction.py` |
 | — | Comparison with the authority's approved AutoCAD setback drawings | ⛔ | harness in `tests/test_setback_reference.py`; no reference drawing supplied yet, so no equivalence is claimed |
 | — | Jordan TM (ESRI:102158 / EPSG:3066) default, coordinate checks, scale factor, lat/lon display, Pick parcel | ✅ | `tests/test_crs_jtm.py`; real plan maps to Wadi Musa |
-| M6 | Windows packaging (PyInstaller spec + build script) | 🟡 | build-tested on Linux only |
+| M6 | Windows packaging (PyInstaller spec + build script) | 🟡 | Frozen build and self-test passed on Linux in a clean environment. Windows CI workflow added (see `docs/RELEASE_CHECKLIST.md` for its result). No manual check yet on a clean Windows machine |
+| — | GIS data management: staged import/refresh for parcels, roads, zoning; comparison; atomic activation; rollback; audit; dataset pins in calculations; rule version comparison | ✅ | `tests/test_gis_datasets.py` (19 tests), `docs/GIS_DATA_REFRESH.md` |
+| — | Road reference layers (lines/polygons, attributes kept, insert as `GIS_ROADS`) | ✅ | `tests/test_gis_datasets.py` |
+| — | Code audit: confirmed defects fixed with regression tests | ✅ | `AUDIT_REPORT.md`, `tests/test_audit_regressions.py` |
+| — | Diagnostic log, uncaught-error reporting, offline self-test (`self-test`) | ✅ | `core/diagnostics.py`, `selftest.py`; ran from source and from the frozen build |
 
 ### Next steps
 1. Install ODA File Converter on a Windows test machine, add real (non-confidential) DWG
@@ -128,7 +134,7 @@ at the end of this file.
    never committed) cases.
 4. Trim/extend for polylines and arcs; translate engine diagnostic messages.
 
-## Known issues found during the setback work (not fixed, separate task)
+## Known issues found during the setback work (fixed in the audit round, see AUDIT_REPORT.md A14)
 
 - **Old calculation snapshots fail "reproduce".** `CalculationInputs.canonical_json()` hashes
   every field. Snapshots stored before `rule_override` (commit e50674e) or `zoning`

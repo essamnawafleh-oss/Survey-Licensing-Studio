@@ -1,11 +1,16 @@
-# Windows release-candidate build: test suite, PyInstaller build (packaging/build_windows.ps1),
-# and the frozen self-test under a fresh, empty user profile. Uses synthetic data only.
+# Windows release-candidate build: test suite, PyInstaller build and the frozen self-test under a
+# fresh, empty user profile. Synthetic data only. Same steps as packaging/build_windows.ps1, run
+# separately so that a failing step publishes its output as annotations (readable via the API).
 name: Windows release candidate
 
 on:
   workflow_dispatch:
   push:
     branches: [claude/foundation]
+
+defaults:
+  run:
+    shell: pwsh
 
 jobs:
   build-and-smoke-test:
@@ -21,22 +26,56 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Tests, build and frozen self-test
-        shell: pwsh
-        run: ./packaging/build_windows.ps1
+      - name: Define the failure reporter
+        run: |
+          @'
+          function Invoke-Logged($name, [scriptblock]$cmd) {
+              $log = Join-Path $env:RUNNER_TEMP "$name.txt"
+              & $cmd 2>&1 | Tee-Object -FilePath $log
+              $code = $LASTEXITCODE
+              if ($code -ne 0) {
+                  Get-Content $log | Select-String -Pattern "FAILED|ERROR|Error:|Traceback|No module" |
+                      Select-Object -First 8 | ForEach-Object { Write-Output "::error title=$name::$($_.Line)" }
+                  $tail = (Get-Content $log -Tail 60) -join "%0A"
+                  Write-Output "::error title=$name (last 60 lines)::$tail"
+                  exit $code
+              }
+          }
+          '@ | Set-Content (Join-Path $env:RUNNER_TEMP "logged.ps1")
+
+      - name: Install dependencies
+        run: |
+          . (Join-Path $env:RUNNER_TEMP "logged.ps1")
+          Invoke-Logged "pip-install" { python -m pip install --upgrade pip; python -m pip install -r requirements-dev.txt "pyinstaller==6.*" }
+          Invoke-Logged "pip-check" { python -m pip check }
+
+      - name: Test suite
+        run: |
+          . (Join-Path $env:RUNNER_TEMP "logged.ps1")
+          Invoke-Logged "pytest" { python -m pytest -q -rfE -p no:cacheprovider }
+
+      - name: PyInstaller build
+        run: |
+          . (Join-Path $env:RUNNER_TEMP "logged.ps1")
+          Invoke-Logged "pyinstaller" { pyinstaller packaging\sls.spec --noconfirm }
+
+      - name: Frozen self-test
+        run: |
+          . (Join-Path $env:RUNNER_TEMP "logged.ps1")
+          Invoke-Logged "self-test" { .\dist\SurveyLicensingStudio\SurveyLicensingStudio-console.exe self-test --report dist\selftest.json }
 
       - name: Self-test as a new user (empty APPDATA / LOCALAPPDATA, no development environment)
-        shell: pwsh
         run: |
-          $profile = Join-Path $env:RUNNER_TEMP "fresh-user"
-          New-Item -ItemType Directory -Force -Path "$profile\Roaming", "$profile\Local" | Out-Null
-          $env:APPDATA = "$profile\Roaming"
-          $env:LOCALAPPDATA = "$profile\Local"
+          . (Join-Path $env:RUNNER_TEMP "logged.ps1")
+          $fresh = Join-Path $env:RUNNER_TEMP "fresh-user"
+          New-Item -ItemType Directory -Force -Path "$fresh\Roaming", "$fresh\Local" | Out-Null
+          $env:APPDATA = "$fresh\Roaming"
+          $env:LOCALAPPDATA = "$fresh\Local"
           Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
-          .\dist\SurveyLicensingStudio\SurveyLicensingStudio-console.exe self-test --report dist\selftest-fresh-user.json
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Get-ChildItem -Recurse $profile | Select-Object FullName | Out-String | Write-Host
-          if (Test-Path dist\SurveyLicensingStudio\data) { Write-Error "user data was written into the installation folder"; exit 1 }
+          Invoke-Logged "self-test-fresh-user" { .\dist\SurveyLicensingStudio\SurveyLicensingStudio-console.exe self-test --report dist\selftest-fresh-user.json }
+          if (Test-Path dist\SurveyLicensingStudio\data) { Write-Output "::error::user data was written into the installation folder"; exit 1 }
+          $summary = Get-Content dist\selftest-fresh-user.json | ConvertFrom-Json
+          foreach ($c in $summary.checks) { Write-Output "::notice title=self-test $($c.name)::ok=$($c.ok) $($c.detail)" }
 
       - name: Upload the distribution folder and self-test reports
         if: always()

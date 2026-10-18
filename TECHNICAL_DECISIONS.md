@@ -220,3 +220,52 @@ Each decision records context, the choice, and its consequences. Add new entries
   - The most common review items: collapsed offsets of very short digitised segments (1,328), self-intersections (1,051), eliminated offsets (637), strip cuts (564), parallel offsets (486), remote intersections (245).
   - One parcel failed validation until the strip-overlap check was made per piece, matching the strip cut. Noise summed over 1,285 offsets had exceeded 1 cm² in total.
 - **Not claimed:** equivalence with AutoCAD. `tests/test_setback_reference.py` compares against the authority's reference drawings once they are provided (`SLS_SETBACK_REFERENCES`).
+
+## TD-28 GIS datasets: one staged pipeline with adapters (supersedes the direct imports of TD-24/TD-25)
+- **Context:** parcel and zoning imports wrote and activated a new version in one step. Refreshing
+  authority data needs validation before activation, a comparison, explicit confirmation,
+  rollback and an audit trail. Roads are a new dataset of the same kind.
+- **Choice:**
+  - `persistence/datasets.py` holds the shared steps: inspect (sidecars, CRS), read and validate,
+    stage, compare, activate, rollback, discard and audit.
+  - Each dataset kind has an adapter for what differs: accepted geometry, field mapping, feature
+    rows and identity.
+  - The old `import_layer` calls are now stage + activate, so they keep working.
+- **Atomicity:** staging writes the version row and its features in one transaction. Source
+  copies made by a failed or cancelled attempt are removed, and the failure is audited.
+  Activation flips the active flags in one transaction, and the audit row is part of it.
+- **Comparison identity:** `GLOBALID` when mapped in both versions, else the DLS key / road name,
+  else geometry. Repeated keys are compared as multisets.
+- **Pins:** `CalculationInputs.datasets` records the dataset versions a calculation used. It is
+  left out of the hash when empty, so older snapshots keep their hashes.
+- **Missing CRS:** a missing or unrecognised `.prj` must be declared explicitly. This replaces
+  TD-25's "a layer without `.prj` is assumed to be in the case grid".
+
+## TD-29 Concurrency: one SQLite connection shared with worker threads
+Long imports run in a worker thread while the UI waits. The connection is opened with
+`check_same_thread=False` and every use is serialised by a re-entrant lock, held for the whole of
+a transaction. This is simpler and more predictable than per-thread connections, and the
+application remains single-process.
+
+## TD-30 Robust overlays in the offset construction (refines TD-26/TD-27)
+- Plain GEOS overlays failed when offset lines coincided with parcel edges. The audit found
+  false "outside parcel" errors, results that depended on the start vertex, and invalid zones.
+- All construction overlays now use snap-rounding on a 1 nm grid in the local metric frame
+  (`GRID_M`). Vertices move by at most 0.5 nm.
+- Strip cuts are computed strip by strip, and the zone is validated (buildable + zone = parcel).
+- Polygon parts under 1 cm² are reported as noise.
+
+## TD-31 Engine version and reproducibility
+- Behaviour fixes from the audit raise `ENGINE_VERSION` to 1.1.0.
+- `reproduce()` verifies the stored snapshot text. It compares results under the recorded engine
+  version, and when an older engine's result differs it says so, without touching the stored
+  calculation.
+- Out-of-date detection uses `content_key()`, which is the input hash without the drawing
+  revision id, so re-saving unchanged geometry is not a change.
+
+## TD-32 Diagnostics and self-test
+- A rotating log under `%LOCALAPPDATA%\SurveyLicensingStudio\logs` records start-up details and
+  uncaught exceptions. The windowed executable has no console.
+- `self-test` checks a packaged copy offline, on temporary synthetic data, with network access
+  blocked.
+- A console twin executable is built for the administration commands.
