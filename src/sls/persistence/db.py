@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -30,7 +31,11 @@ class Database:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.backup_dir = backup_dir
-        self.conn = sqlite3.connect(str(self.path), isolation_level=None)
+        # Long imports run in a worker thread (MainWindow.run_busy / run_task) while the UI thread
+        # waits. The connection may therefore be used from more than one thread; every use is
+        # serialised by ``self.lock`` (held for the whole of a transaction).
+        self.lock = threading.RLock()
+        self.conn = sqlite3.connect(str(self.path), isolation_level=None, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.execute("PRAGMA journal_mode = WAL")
@@ -41,7 +46,11 @@ class Database:
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
-        """Nestable transaction (inner levels use savepoints)."""
+        """Nestable transaction (inner levels use savepoints); holds the connection lock throughout."""
+        with self.lock:
+            yield from self._transaction()
+
+    def _transaction(self) -> Iterator[sqlite3.Connection]:
         if self._depth == 0:
             self.conn.execute("BEGIN IMMEDIATE")
         else:
@@ -65,13 +74,16 @@ class Database:
                 self.conn.execute(f"RELEASE sp{self._depth}")
 
     def query(self, sql: str, params: tuple | dict = ()) -> list[sqlite3.Row]:
-        return self.conn.execute(sql, params).fetchall()
+        with self.lock:
+            return self.conn.execute(sql, params).fetchall()
 
     def query_one(self, sql: str, params: tuple | dict = ()) -> sqlite3.Row | None:
-        return self.conn.execute(sql, params).fetchone()
+        with self.lock:
+            return self.conn.execute(sql, params).fetchone()
 
     def execute(self, sql: str, params: tuple | dict = ()) -> sqlite3.Cursor:
-        return self.conn.execute(sql, params)
+        with self.lock:
+            return self.conn.execute(sql, params)
 
     # -- migrations ---------------------------------------------------------------
 
@@ -86,6 +98,12 @@ class Database:
     def migrate(self) -> list[int]:
         """Apply pending migrations. Backs up a non-empty database first."""
         current = self.schema_version()
+        latest = max(m[0] for m in MIGRATIONS)
+        if current > latest:
+            from ..core.errors import StorageError
+
+            raise StorageError(f"This database was created by a newer version of the application (schema {current}; "
+                               f"this version supports up to {latest}). It was not opened or changed.")
         pending = [m for m in MIGRATIONS if m[0] > current]
         if not pending:
             return []

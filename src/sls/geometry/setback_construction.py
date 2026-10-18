@@ -36,9 +36,9 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import shapely
 from shapely import STRtree
-from shapely.geometry import LineString, Polygon
+from shapely.geometry import LineString, MultiPolygon, Polygon
 from shapely.geometry.base import BaseGeometry
-from shapely.ops import polygonize, unary_union
+from shapely.ops import polygonize
 from shapely.validation import explain_validity
 
 from .primitives import Point2, geom_parts
@@ -53,6 +53,7 @@ PARALLEL_SIN = 1e-9        # |sin(angle between edges)| below this: parallel, no
 JOG_ANGLE_DEG = 0.5        # nearly collinear edges with different setbacks: step instead of a remote intersection
 REMOTE_FACTOR = 5.0        # join further than this × the larger adjacent setback from its vertex: review
 AREA_TOL_M2 = 1e-4         # area changes smaller than this (1 cm²) are floating-point noise
+GRID_M = 1e-9              # overlays use GEOS snap-rounding on a 1 nm grid (robust; see TD-27)
 
 INFO, REVIEW, ERROR = "info", "review", "error"
 
@@ -121,6 +122,7 @@ class OffsetConstruction:
     buildable: BaseGeometry
     issues: list[ConstructionIssue]
     valid: bool
+    setback_zone: BaseGeometry = field(default_factory=Polygon)   # parcel − buildable (validated)
 
     @property
     def review_keys(self) -> list[str]:
@@ -254,12 +256,12 @@ def build_offset_construction(parcel: Polygon, edges: Sequence["BoundaryEdge"]) 
         ring.pop()
     strip_list = [(e, LineString([e.start, e.end]).buffer(orient * e.distance_m, single_sided=True))
                   for e in oes if e.distance_m > 0]
-    strips = unary_union([g for _, g in strip_list]) if strip_list else Polygon()
+    strips = _union([g for _, g in strip_list]) if strip_list else Polygon()
     kept: list[Polygon] = []
     discarded: list[tuple[Polygon, str]] = []
     if len(ring) >= 3:
         ring_line = LineString(ring + [ring[0]])
-        faces = [f for f in polygonize(unary_union(ring_line)) if f.area > 0]
+        faces = [f for f in polygonize(shapely.union_all([ring_line], grid_size=GRID_M)) if f.area > 0]
         if faces:
             rps = [f.representative_point() for f in faces]
             xs, ys = np.array([q.x for q in rps]), np.array([q.y for q in rps])
@@ -282,9 +284,9 @@ def build_offset_construction(parcel: Polygon, edges: Sequence["BoundaryEdge"]) 
             issues.append(ConstructionIssue(
                 "inverted_offset", REVIEW, f"The joined offsets enclose {area:.2f} m² that lies inside the setback strips "
                 "(the offsets passed each other); it was discarded.", area_m2=area))
-    kept_union = unary_union(kept) if kept else Polygon()
-    buildable: BaseGeometry = kept_union.intersection(parcel) if kept else Polygon()
-    clipped = _polygonal(kept_union.difference(parcel)) if kept else Polygon()
+    kept_union = _union(kept) if kept else Polygon()
+    buildable: BaseGeometry = _ov("intersection", kept_union, parcel) if kept else Polygon()
+    clipped = _polygonal(_ov("difference", kept_union, parcel)) if kept else Polygon()
     if clipped.area >= AREA_TOL_M2:
         issues.append(ConstructionIssue(
             "outside_parcel", REVIEW, f"{clipped.area:.2f} m² of the joined offsets lay outside the parcel and was "
@@ -293,20 +295,31 @@ def build_offset_construction(parcel: Polygon, edges: Sequence["BoundaryEdge"]) 
         clipped = Polygon()
     # Parts of the result inside a strip. The boundary runs exactly along the strips' inner sides,
     # so floating-point noise leaves zero-area slivers there; only parts of AREA_TOL_M2 or more are real.
-    cut_parts = [g for g in geom_parts(buildable.intersection(strips)) if g.area >= AREA_TOL_M2] if strip_list else []
+    # Computed strip by strip (never against the union of all strips, whose overlay is fragile).
+    cut_parts: list[BaseGeometry] = []
+    cut_idx: list[int] = []
+    if strip_list and not buildable.is_empty:
+        tree = STRtree([g for _, g in strip_list])
+        for j in sorted(int(x) for x in tree.query(buildable, predicate="intersects")):
+            pieces = [g for g in geom_parts(_ov("intersection", buildable, strip_list[j][1])) if g.area >= AREA_TOL_M2]
+            if pieces:
+                cut_parts += pieces
+                cut_idx.append(j)
     strip_cut: BaseGeometry = Polygon()
     if cut_parts:
-        strip_cut = unary_union(cut_parts)
-        tree = STRtree([g for _, g in strip_list])
-        cut_idx = sorted({int(j) for x in cut_parts for j in tree.query(x, predicate="intersects")
-                          if x.intersection(strip_list[int(j)][1]).area >= AREA_TOL_M2})
+        strip_cut = _union(cut_parts)
         cut_edges = [strip_list[j][0].index + 1 for j in cut_idx]
-        buildable = buildable.difference(strip_cut)
+        buildable = _ov("difference", buildable, strip_cut)
         issues.append(ConstructionIssue(
             "strip_cut", REVIEW, f"Trim/extend corners left {strip_cut.area:.2f} m² inside the setback strip of edge(s) "
             + ", ".join(map(str, cut_edges)) + "; it was cut along those strips (perpendicular step where the larger "
             "setback begins).", cut_edges, area_m2=float(strip_cut.area)))
-    buildable = _polygonal(buildable)
+    buildable, noise = _polygonal(buildable, with_noise=True)
+    if noise:
+        issues.append(ConstructionIssue(
+            "noise_parts", INFO, f"{len(noise)} part(s) smaller than {AREA_TOL_M2:g} m² ({sum(noise):.2e} m² in total) "
+            "were floating-point noise along the offset lines and are not counted as buildable polygons.",
+            area_m2=float(sum(noise))))
 
     # -- per-edge use in the final boundary ----------------------------------------------------
     _edge_usage(oes, buildable)
@@ -325,21 +338,30 @@ def build_offset_construction(parcel: Polygon, edges: Sequence["BoundaryEdge"]) 
             "multiple_polygons", REVIEW, f"The buildable area is split into {len(parts)} separate polygons: "
             + ", ".join(f"{p.area:.2f} m²" for p in sorted(parts, key=lambda p: -p.area)) + ".",
             area_m2=float(buildable.area)))
+    setback_zone = _polygonal(_ov("difference", parcel, buildable))
     problems = []
     if not buildable.is_empty and not buildable.is_valid:
         problems.append(explain_validity(buildable))
-    if buildable.difference(parcel).area >= AREA_TOL_M2:
-        problems.append("buildable area extends outside the parcel")
-    if strip_list:
-        # same per-piece tolerance as the strip cut: noise along many offsets may add up, a real overlap cannot hide
-        overlap = max((g.area for g in geom_parts(buildable.intersection(strips))), default=0.0)
+    if not setback_zone.is_empty and not setback_zone.is_valid:
+        problems.append(f"setback zone invalid: {explain_validity(setback_zone)}")
+    outside = max((g.area for g in geom_parts(_ov("difference", buildable, parcel))), default=0.0)
+    if outside >= AREA_TOL_M2:
+        problems.append(f"buildable area extends outside the parcel ({outside:.4f} m²)")
+    if abs(buildable.area + setback_zone.area - parcel.area) > AREA_TOL_M2:
+        problems.append(f"buildable {buildable.area:.4f} m² + setback zone {setback_zone.area:.4f} m² ≠ parcel "
+                        f"{parcel.area:.4f} m²")
+    if strip_list and not buildable.is_empty:
+        # per strip, same tolerance as the strip cut: a real overlap cannot hide behind noise
+        tree = STRtree([g for _, g in strip_list])
+        overlap = max((g.area for j in tree.query(buildable, predicate="intersects")
+                       for g in geom_parts(_ov("intersection", buildable, strip_list[int(j)][1]))), default=0.0)
         if overlap >= AREA_TOL_M2:
             problems.append(f"buildable area overlaps a setback strip ({overlap:.4f} m²)")
     if problems:
         issues.append(ConstructionIssue("validation_failed", ERROR, "The constructed buildable area failed validation: "
                                         + "; ".join(problems) + ". Correct the boundary or classification."))
     return OffsetConstruction("ccw" if orient > 0 else "cw", oes, joins, ring, kept, discarded, clipped, strip_cut,
-                              buildable, issues, not problems)
+                              buildable, issues, not problems, setback_zone)
 
 
 def _unit(a: Point2, b: Point2) -> Point2:
@@ -415,9 +437,34 @@ def _winding(ring: Sequence[Point2], xs: np.ndarray, ys: np.ndarray) -> np.ndarr
     return out
 
 
-def _polygonal(geom: BaseGeometry) -> BaseGeometry:
-    """Polygonal part only: clipping can leave zero-area lines/points next to the polygons."""
+def _ov(op: str, a: BaseGeometry, b: BaseGeometry) -> BaseGeometry:
+    """Overlay with snap-rounding on the GRID_M grid (plain GEOS overlays can fail when edges coincide).
+
+    Only the polygonal result is kept: snap-rounding may add zero-area lines/points, which would
+    make the next overlay's input mixed-dimension.
+    """
+    return _areal(getattr(shapely, op)(_areal(a), _areal(b), grid_size=GRID_M))
+
+
+def _union(geoms: Sequence[BaseGeometry]) -> BaseGeometry:
+    return _areal(shapely.union_all([_areal(g) for g in geoms], grid_size=GRID_M))
+
+
+def _areal(geom: BaseGeometry) -> BaseGeometry:
     parts = geom_parts(geom)
     if not parts:
         return Polygon()
-    return parts[0] if len(parts) == 1 else unary_union(parts)
+    return parts[0] if len(parts) == 1 else MultiPolygon(parts)
+
+
+def _polygonal(geom: BaseGeometry, with_noise: bool = False):  # type: ignore[no-untyped-def]
+    """Polygonal part only: overlays can leave zero-area lines/points next to the polygons.
+
+    Parts smaller than AREA_TOL_M2 are floating-point noise; with ``with_noise`` their areas are
+    returned so the caller can report them.
+    """
+    parts = geom_parts(geom)
+    real = [p for p in parts if p.area >= AREA_TOL_M2]
+    noise = [float(p.area) for p in parts if p.area < AREA_TOL_M2]
+    out = Polygon() if not real else real[0] if len(real) == 1 else _union(real)
+    return (out, noise) if with_noise else out

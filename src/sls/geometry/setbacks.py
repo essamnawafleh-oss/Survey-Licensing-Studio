@@ -23,7 +23,7 @@ from shapely.ops import unary_union
 
 from ..core.errors import GeometryError, MissingRuleError, ValidationError
 from .primitives import Point2, geom_parts
-from .setback_construction import OffsetConstruction, _polygonal, build_offset_construction
+from .setback_construction import OffsetConstruction, build_offset_construction
 
 # Arc resolution for distance zones. Buffer arcs are inscribed polygons, so at reflex
 # corners the buildable boundary may be closer than d by at most d*(1-cos(pi/(4*QUAD_SEGS))):
@@ -161,7 +161,7 @@ def compute_setbacks_offset(parcel: Polygon, edge_types: Sequence[str], distance
     con = build_offset_construction(parcel, edges)
     own = {"multiple_polygons", "empty_result", "zero_setback"}  # worded by _result
     warnings = [i.message for i in con.issues if i.code not in own]
-    setback_zone = _polygonal(parcel.difference(con.buildable))
+    setback_zone = con.setback_zone
     res = _result(parcel, con.buildable, setback_zone, edges, sliver_tolerance_m2, warnings)
     res.method, res.construction = METHOD_OFFSET_CORNER, con
     res.corners = [q for j in con.joins for q in j.points]

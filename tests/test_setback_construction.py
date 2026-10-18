@@ -115,7 +115,8 @@ def test_unequal_setbacks_on_rotated_rectangle():
     res, con = build(list(poly.exterior.coords)[:-1], ["front", "side", "rear", "side"],
                      {"front": 5, "side": 2, "rear": 3})
     expected = affinity.rotate(Polygon([(2, 5), (18, 5), (18, 27), (2, 27)]), 30, origin=(0, 0))
-    assert res.buildable.symmetric_difference(expected).area < 1e-9
+    # vertices are snap-rounded to the 1 nm overlay grid (GRID_M), so agreement is at nanometre level
+    assert res.buildable.symmetric_difference(expected).area < 1e-6
     assert con.review_keys == []
 
 
