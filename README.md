@@ -12,6 +12,19 @@ All processing is offline: no survey geometry or document ever leaves the workst
 
 ## Installation (Windows)
 
+**With the installer (recommended):** run `SurveyLicensingStudio-Setup-<version>.exe`.
+- No Python and no administrator rights are needed. By default it installs for the current user
+  in `%LOCALAPPDATA%\Programs\Survey Licensing Studio`; an administrator can choose all users.
+- It adds Start-menu entries for the program and for its offline self-test.
+- Installing a newer version upgrades in place.
+- The installer is built by the Windows CI workflow (artifact *SurveyLicensingStudio-Setup*), or
+  locally with `packaging\build_installer.ps1`, which needs Inno Setup 6.
+- Neither installing nor uninstalling touches your data (`%LOCALAPPDATA%\SurveyLicensingStudio\data`),
+  settings or logs.
+- The installer is not code-signed, so SmartScreen may ask for confirmation.
+
+**From source (development):**
+
 1. Install **Python 3.12 or newer (64-bit)** from python.org.
 2. In PowerShell, from the repository folder:
    ```powershell

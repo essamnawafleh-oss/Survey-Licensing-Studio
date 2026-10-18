@@ -30,6 +30,9 @@ or explicitly accepted by the department.
 | Qt platform plugins and QtPdf bundled | ✅ Linux (offscreen) / ✅ Windows (offscreen) | Self-test `qt_pdf_module` opened the generated report |
 | Optional converters missing are handled | ✅ | Self-test `optional_converters`; DWG/OCR absent gives a message, not a crash |
 
+| Setup.exe (Inno Setup, per-user, upgrade in place) built on Windows | ✅ | [run 39158622978](https://github.com/essamnawafleh-oss/Survey-Licensing-Studio/actions/runs/39158622978): `SurveyLicensingStudio-Setup-0.1.0.exe`, 68.5 MB, artifact *SurveyLicensingStudio-Setup* |
+| Silent install as a new user, self-test from the installed copy, reinstall (upgrade) keeps user data, uninstall removes the program but keeps data and settings | ✅ | Same run, step *Install, self-test, upgrade and uninstall as a new user* |
+
 ## 3. First launch and data safety
 
 | Check | Status | Evidence |
@@ -49,14 +52,14 @@ These still need a person at a Windows machine. None of them has been done yet.
 
 | Check | Status | How |
 |---|---|---|
-| Install by copying `dist\SurveyLicensingStudio` to a clean Windows 10/11 account without Python | ⛔ | Unzip the CI artifact *SurveyLicensingStudio-windows-rc*, then run `SurveyLicensingStudio.exe` |
+| Install with Setup.exe on a clean Windows 10/11 account without Python (interactive wizard, Start menu, desktop icon, first start) | ⛔ | Run the CI artifact *SurveyLicensingStudio-Setup* |
 | Arabic UI renders correctly (RTL, fonts) on a real display | ⛔ | Open the app, check menus and dialogs |
 | PDF preview and export on screen | ⛔ | Synthetic case → *Case → PDF report* → Preview → Export |
 | DXF import and export with a real drawing | ⛔ | Import a department DXF; compare with CAD |
 | GIS import/refresh/rollback with the real Petra layers | ⛔ | *File → GIS data management* with `JTM_VW` and `intersect` (local copies only) |
 | Backup and restore from the UI | ⛔ | *File → Backup now*, then *Restore* |
 | Settings created in `%APPDATA%`, data in `%LOCALAPPDATA%` | ⛔ (automated part ✅ in CI) | Check both folders after the first run |
-| Upgrade test: run vN, create data, replace the folder with vN+1, data still present | ⛔ | Keep the data folder; replace only the install folder |
+| Upgrade from a real earlier version with real cases (same-version reinstall is tested in CI) | ⛔ | Install vN, create cases, install vN+1, check cases and migrations |
 | Antivirus / SmartScreen behaviour of the unsigned executable | ⛔ | The executable is not code-signed |
 | Long paths (deep case folders) | ⛔ | Without Windows long-path support, store paths can exceed 260 characters |
 
@@ -68,5 +71,5 @@ These still need a person at a Windows machine. None of them has been done yet.
   drawings (`SLS_SETBACK_REFERENCES`).
 - **OCR on Windows:** needs Tesseract to be installed. The 2 OCR tests are skipped on the CI
   runner.
-- **Code signing, installer (MSI/Setup.exe), auto-update:** none. Distribution is a one-folder
-  zip.
+- **Code signing and auto-update:** none. The installer and executables are unsigned, and there is
+  no MSI package.

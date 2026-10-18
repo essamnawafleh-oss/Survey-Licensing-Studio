@@ -123,6 +123,7 @@ Audit findings, fixes and open risks: [`AUDIT_REPORT.md`](AUDIT_REPORT.md). Rele
 | — | GIS data management: staged import/refresh for parcels, roads, zoning; comparison; atomic activation; rollback; audit; dataset pins in calculations; rule version comparison | ✅ | `tests/test_gis_datasets.py` (19 tests), `docs/GIS_DATA_REFRESH.md` |
 | — | Road reference layers (lines/polygons, attributes kept, insert as `GIS_ROADS`) | ✅ | `tests/test_gis_datasets.py` |
 | — | Code audit: confirmed defects fixed with regression tests | ✅ | `AUDIT_REPORT.md`, `tests/test_audit_regressions.py` |
+| — | Windows installer `Setup.exe` (Inno Setup; per-user; upgrade in place; user data never touched) | ✅ | Built and tested by CI on Windows: install, self-test, upgrade, uninstall. Not yet tried interactively on a clean machine |
 | — | Diagnostic log, uncaught-error reporting, offline self-test (`self-test`) | ✅ | `core/diagnostics.py`, `selftest.py`; ran from source and from the frozen build |
 
 ### Next steps
