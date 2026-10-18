@@ -59,6 +59,10 @@ class SettingsDialog(QDialog):
         self.sliver.setRange(0.0001, 10)
         self.sliver.setValue(settings.sliver_area_tolerance_m2)
         self.sliver.setSuffix(" m²")
+        self.setback_method = QComboBox()
+        for m in ("offset_corner", "distance_zone"):
+            self.setback_method.addItem(tr(f"settings.setback_method.{m}"), m)
+        self.setback_method.setCurrentIndex(max(0, self.setback_method.findData(settings.setback_method)))
         f.addRow(tr("settings.data_dir"), row)
         f.addRow("", QLabel(tr("settings.restart_note")))
         f.addRow(tr("settings.language"), self.lang)
@@ -77,6 +81,7 @@ class SettingsDialog(QDialog):
         f.addRow(tr("settings.tesseract_path"), self.tess)
         f.addRow("", self.tess_status)
         f.addRow(tr("settings.sliver"), self.sliver)
+        f.addRow(tr("settings.setback_method"), self.setback_method)
         f.addRow(ok_cancel(self))
 
     def _dir(self, edit: QLineEdit) -> None:
@@ -97,6 +102,7 @@ class SettingsDialog(QDialog):
         s.libredwg_path = self.libredwg.text().strip()
         s.tesseract_path = self.tess.text().strip()
         s.sliver_area_tolerance_m2 = self.sliver.value()
+        s.setback_method = self.setback_method.currentData()
         return s
 
 

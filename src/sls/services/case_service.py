@@ -330,6 +330,7 @@ class CaseService:
                            else None),
         )
         inputs.zoning = self.zoning_for_boundary(loaded.drawing, parcel.boundary_entity_id, case.units.crs_id)
+        inputs.setback_method = self.ws.settings.setback_method
         if parcel.verified and not verified:
             inputs.extraction_issues.append({
                 "severity": "error", "code": "boundary_changed",

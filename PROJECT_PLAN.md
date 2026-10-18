@@ -58,8 +58,10 @@ at the end of this file.
    `ezdxf.addons.odafc`). Neither is present in the build environment, so DWG cannot be
    tested here. DWG stays ⛔ until acceptance tests pass on real DWG files.
 2. **Legal setback geometry.** A plain negative buffer is wrong when different edges
-   have different setbacks. The engine uses per-edge Euclidean distance zones and reports
-   empty, split or sliver results explicitly. Edge classification (front/side/rear) is
+   have different setbacks. The engine offsets each edge inward by its own setback and
+   trims/extends the offsets to sharp corners, as a surveyor does in CAD (TD-26). The
+   per-edge distance-zone method (TD-06) stays selectable. Both report empty, split or
+   sliver results explicitly. Edge classification (front/side/rear) is
    always confirmed by the user and never inferred silently.
 3. **Units and CRS.** DXF `$INSUNITS` is often missing or wrong. Calculations refuse
    to run until the units have been verified by a person. Geographic (lat/long) CRSs are
@@ -72,7 +74,7 @@ at the end of this file.
 6. **Data integrity.** Original files are never overwritten (content-hashed copies).
    Calculations are pinned to a rule version and to license record revisions.
 
-## Feature status (2026-10-18, 139 automated tests passing, 2 skipped without local DWG fixtures)
+## Feature status (2026-10-18, 154 automated tests passing, 2 skipped without local DWG fixtures)
 
 | Area | Feature | Status | Evidence / notes |
 |------|---------|--------|------------------|
@@ -111,6 +113,7 @@ at the end of this file.
 | M6 | DWG import (ODA File Converter or LibreDWG) | 🟡 | verified on the real PDTRA regulatory plan with LibreDWG 0.9.3, with documented converter losses (TD-22); ODA path and DWG writing unverified |
 | — | Parcel register from GIS Shapefile (DLS keys), Find parcel, register-backed Pick parcel, case fields auto-filled | ✅ | `tests/test_cadastre.py`; real Petra layer (20,197 parcels) imported and used locally |
 | — | Zoning register (ZONE_ID per piece): geometric overlay, slivers/gaps, auto land use for single-zone parcels, engine warnings, report table | ✅ | `tests/test_zoning.py`; real layer (23,400 pieces) imported in 3.3 s |
+| — | Surveyor setback method: individual inward offsets, trim/extend, sharp corners, collapsed-edge and narrow-section handling; old method selectable and used to reproduce old calculations | ✅ | `tests/test_setback_offset.py`; 2,867 real Petra parcels and 1,391 random polygons checked |
 | — | Jordan TM (ESRI:102158 / EPSG:3066) default, coordinate checks, scale factor, lat/lon display, Pick parcel | ✅ | `tests/test_crs_jtm.py`; real plan maps to Wadi Musa |
 | M6 | Windows packaging (PyInstaller spec + build script) | 🟡 | build-tested on Linux only |
 
@@ -122,3 +125,14 @@ at the end of this file.
    layout, the case form fields and the report title block. Then pilot with real (local,
    never committed) cases.
 4. Trim/extend for polylines and arcs; translate engine diagnostic messages.
+
+## Known issues found during the setback work (not fixed, separate task)
+
+- **Old calculation snapshots fail "reproduce".** `CalculationInputs.canonical_json()` hashes
+  every field. Snapshots stored before `rule_override` (commit e50674e) or `zoning`
+  (commit aae4790) existed therefore get a different input hash when loaded, and
+  `CalculationRepository.reproduce()` reports "stored inputs do not match their recorded hash".
+  - Stored data is not damaged.
+  - Fix: leave optional fields out of the hash when they hold their default. That needs care,
+    because records made after those commits include them as `null`.
+  - The new `setback_method` field already avoids this.

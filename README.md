@@ -85,6 +85,20 @@ modified, and stored files are never overwritten.
    decided by the software). The results also show eligibility checks, issues and a full
    trace (inputs, formula, unit, sources). *Add generated setback geometry* draws the
    buildable limit and violation areas on separate derived layers.
+   - **Setback method** (*Settings → Setback method*). The default is the surveyor's CAD
+     workflow:
+     - each boundary edge is offset inward by its own setback
+     - consecutive offsets are trimmed/extended to their intersection, giving sharp corners,
+       inner corners included
+     - offsets of collapsed short edges are trimmed away, and closed narrow sections split
+       the buildable area
+
+     Where the setback changes along a nearly straight boundary, a perpendicular step is
+     drawn where the larger setback begins. Very far-reaching corner intersections are
+     listed for review.
+
+     The previous method, minimum-distance zones (rounded inner corners), can still be
+     selected. Each calculation records the method it used, and is always reproduced with it.
 9. **Photos, attachments, notes:** *Case → Photos, attachments & notes*. Notes appear in the
    report and never change any calculated value.
 10. **Report:** *Case → PDF report*. Set the options, **Preview**, then **Export revision**
@@ -248,9 +262,9 @@ architecture layering and offscreen UI workflows. All fixtures are **synthetic**
 - DWG is unverified (above). HATCH, 3D solids, images and paper-space entities are not
   imported; they are always listed in the import report, and the source file is kept.
 - Trim and Extend operate on LINE entities only.
-- Setbacks use the exact minimum-distance definition, which gives rounded inner corners.
-  Other legal conventions, such as mitred corners, need confirmation from the authority
-  before they are added.
+- Setbacks: the surveyor offset method (sharp corners) is the default. The minimum-distance
+  method (rounded inner corners) remains selectable. Which convention is legally binding
+  should be confirmed with the authority. Parcels with holes are refused by both methods.
 - Diagnostic messages from the calculation engine are in English. Report and UI labels are
   in Arabic and English.
 - Office documents cannot be embedded in the PDF offline; convert them to PDF first. They

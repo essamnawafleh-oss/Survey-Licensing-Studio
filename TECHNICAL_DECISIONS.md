@@ -32,7 +32,7 @@ Each decision records context, the choice, and its consequences. Add new entries
 ## TD-06 Setback algorithm
 - **Inputs:** a verified parcel polygon (closed, valid, non-self-intersecting), an explicit boundary type per edge (`front`, `side`, `rear`, or a custom key) confirmed by the user, and a verified rule version giving a distance for each boundary type.
 - **Method:** the setback zone of edge *i* is `buffer(segment_i, d_i)`, the set of points closer than *d_i* to that edge. The buildable area is `parcel − ⋃ zones`. This is the exact "minimum Euclidean distance from each boundary line" definition. It handles non-convex parcels correctly, because no half-plane from one edge can cut off an unrelated part of the parcel. Different distances per edge work naturally.
-- At reflex (inner) corners the result has a circular arc. That is the true minimum-distance locus. Authorities sometimes use mitred conventions instead. This is documented, and other conventions need confirmation from the authority before they are added.
+- At reflex (inner) corners the result has a circular arc. That is the true minimum-distance locus. Authorities sometimes use mitred conventions instead. *(Update: the surveyor's mitred workflow was requested and is now the default; see TD-26. This method stays selectable.)*
 - Explicit outcomes: `empty` (no buildable area), `multipart` (narrow sections split the area, reported with part areas), and sliver parts below a tolerance (reported, never dropped). Invalid inputs raise errors, and the engine never auto-repairs with `buffer(0)` behind the user's back.
 - A missing rule value for any boundary type used by the parcel stops the calculation (`MissingRuleError`). There is no fallback.
 
@@ -168,3 +168,24 @@ Each decision records context, the choice, and its consequences. Add new entries
   - 1,592 parcel keys span several zones.
   - In a sample of 3,000 parcels: 2,709 lie in one zone, 147 in two, and 63 in none.
   - The import dialog cross-checks the codes and names against the newest rule version.
+
+## TD-26 Surveyor setback method: individual offsets, trim/extend, sharp corners (refines TD-06)
+- **Context:** the department draws setbacks the way a surveyor does in CAD: explode the boundary, offset each edge inward by its own setback, trim/extend the offsets to each other, and keep sharp corners. TD-06's distance zones give arcs at inner corners, and that does not match their drawings.
+- **Algorithm** (`geometry/setbacks.compute_setbacks_offset`; same inputs, validation and outcomes as TD-06):
+  1. Offset line *i* is parallel to edge *i*, at d_i on the inner side. The side follows ring orientation, so clockwise input gives the same result.
+  2. Corner *i* is the intersection of offset lines *i−1* and *i*. This is the trim/extend step, at convex and reflex vertices alike.
+  3. Steps: when edges are parallel, or turn by less than 0.5° with different setbacks, a perpendicular step is drawn at the vertex, aligned with the strip of the edge with the larger setback. Otherwise the lines would meet far away.
+  4. Loops: the corner ring is noded with `unary_union` and `polygonize`. A face is kept only when the ring winds around it in the parcel's own direction, which removes the loops of collapsed short edges and of crossing opposite offsets (narrow sections). A face is also dropped if it lies inside an edge's *strip*, which catches fully inverted offsets. The strip is the band between the edge and its offset, with square ends.
+  5. The result is clipped to the parcel. Parts of at least 1 cm² that still lie inside a strip are cut away and reported with the edge numbers. Smaller parts are floating-point noise along the offset lines.
+  6. Corners further than 5 × the largest setback from their vertex are listed for review.
+- **Properties:**
+  - Checked on 1,391 random irregular polygons and on 2,867 real Petra parcels: the result is valid, lies inside the parcel, conserves area (buildable + zone = parcel) and never enters a strip.
+  - Convex parcels: identical to TD-06.
+  - Reflex corner: excludes the full d×d corner, which is d²(1 − π/4) more than TD-06.
+  - At a shallow convex corner with different setbacks, it can keep slightly more than TD-06, because there is no round cap around the vertex. That is the trim/extend convention.
+  - Speed: the same order as TD-06. On parcels of up to 3,200 vertices it took at most about 1 s.
+- **Compatibility:**
+  - Settings → Setback method, defaulting to `offset_corner`, is stored in `CalculationInputs.setback_method`.
+  - Snapshots without the field load as `distance_zone`, and the field is left out of the input hash when it holds that value, so existing records keep their hashes.
+  - `out["setback"]["method"]` and the trace formula change only for the new method, so old results reproduce byte-for-byte. `ENGINE_VERSION` is unchanged for the same reason.
+  - No schema or migration change.

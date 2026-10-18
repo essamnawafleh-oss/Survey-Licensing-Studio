@@ -53,6 +53,9 @@ class CalculationInputs:
     rule_override: dict[str, Any] | None = None
     # Zone overlay of the boundary from the zoning register (snapshot, see zoning_repo).
     zoning: dict[str, Any] | None = None
+    # Setback algorithm (geometry.setbacks). Snapshots stored before this field existed used the
+    # distance-zone method, so that is the default when a snapshot is loaded.
+    setback_method: str = "distance_zone"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -66,7 +69,10 @@ class CalculationInputs:
         return cls(**d)
 
     def canonical_json(self) -> str:
-        return json.dumps(self.to_dict(), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        d = self.to_dict()
+        if d.get("setback_method") == "distance_zone":
+            del d["setback_method"]  # keeps the hashes of snapshots stored before the field existed
+        return json.dumps(d, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
     def input_hash(self) -> str:
         return hashlib.sha256(self.canonical_json().encode("utf-8")).hexdigest()

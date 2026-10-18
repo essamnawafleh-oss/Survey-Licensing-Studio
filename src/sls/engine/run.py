@@ -19,7 +19,7 @@ from shapely.ops import unary_union
 from ..core.errors import SlsError
 from ..geometry.areas import Footprint, LinearFeature, floor_areas, length_totals, setback_intersections
 from ..geometry.primitives import MetricFrame, build_linestring, build_polygon
-from ..geometry.setbacks import SetbackResult, compute_setbacks, suggest_edge_types
+from ..geometry.setbacks import METHOD_OFFSET_CORNER, SetbackResult, setback_function, suggest_edge_types
 from ..licensing.reconcile import reconcile
 from .inputs import CalculationInputs
 
@@ -159,7 +159,8 @@ def run_calculation(inputs: CalculationInputs) -> dict[str, Any]:
                      "conditional_rule")
         else:
             try:
-                setback = compute_setbacks(parcel, inputs.edge_types, distances, inputs.sliver_tolerance_m2)
+                setback = setback_function(inputs.setback_method)(parcel, inputs.edge_types, distances,
+                                                                  inputs.sliver_tolerance_m2)
             except SlsError as exc:
                 fail("setback", exc)
     if parcel is not None and inputs.roads and not inputs.edge_types:
@@ -178,8 +179,15 @@ def run_calculation(inputs: CalculationInputs) -> dict[str, Any]:
                        "setback_m": e.distance_m} for e in setback.edges],
             "buildable_wkt": _wkt(setback.buildable, frame), "zone_wkt": _wkt(setback.setback_zone, frame),
         }
-        trace.add("setback", "Buildable area after setbacks",
-                  "Buildable = Parcel − union over edges i of { p : dist(p, edge_i) < d_i }",
+        if setback.method == METHOD_OFFSET_CORNER:
+            # Only for the new method, so results of earlier distance-zone calculations reproduce unchanged.
+            out["setback"]["method"] = setback.method
+            formula = ("Buildable = Parcel ∩ polygon of the inward offsets of each edge i by d_i, consecutive "
+                       "offsets trimmed/extended to their intersection (sharp corners); loops of collapsed "
+                       "edges removed")
+        else:
+            formula = "Buildable = Parcel − union over edges i of { p : dist(p, edge_i) < d_i }"
+        trace.add("setback", "Buildable area after setbacks", formula,
                   {"distances_m": distances, "edge_types": inputs.edge_types,
                    "rule_code": rule.code if rule else "",
                    "rule_text": dict(rule.setbacks_raw) if rule else {},
