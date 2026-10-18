@@ -11,7 +11,8 @@
     the new one (checked for every test listed);
   - the original reproduction script now gives the expected result (marked *script*).
 - **Baseline before the audit:** 171 passed, 3 skipped (Linux, Python 3.13.16).
-- **After the audit and the GIS work:** 227 passed, 3 skipped.
+- **After the audit and the GIS work:** 229 passed, 3 skipped on Linux. Windows CI result: see
+  `docs/RELEASE_CHECKLIST.md`.
 - **The 3 skips need external material:**
   - real DWG files and a converter (2 tests);
   - the authority's AutoCAD setback reference drawings (1 test).
@@ -37,6 +38,15 @@ Severity: **High** means data loss, wrong legal-geometric output, or a core work
 | A10 | Low | Circle on a wall or fence layer was silently ignored. | Circle on fence. | Counted. Other unsupported kinds on those layers are warned. | `test_a10_…` |
 | A12 | Low | Mistyped projected CRS code skipped the extent check silently. | `EPSG:30666`. | `crs_unknown` warning. | `test_a12_…` |
 | A14 | Med | Calculations saved before later input fields existed failed `reproduce()`. | Snapshot without `zoning`/`rule_override`. | The stored snapshot text itself is verified. | `test_persistence::test_snapshot_from_before…` |
+| A13 | Low/Med | License duplicate detection had several gaps (see note below). | Six license scenarios. | Normalised comparison; per-quantity blocking; engine guards. | `test_a13_…` |
+
+A13 covered these cases:
+- the same license entered as 180.0 and 180.001 counted as a conflict;
+- `LIC-7` and `lic-7` were summed as two licenses;
+- floor `" G"` did not match `"G"`;
+- a fence-length conflict also blocked the floor area;
+- through the engine API only: a negative licensed area *increased* the remaining area, and two
+  licenses without numbers were merged. Entry validation already prevents both in the app.
 
 These behaviour changes raise `ENGINE_VERSION` to 1.1.0. `reproduce()` now says when a stored
 result was produced by an older engine and the current one differs. Stored calculations are never
@@ -86,6 +96,9 @@ Also fixed:
 | P17 | Low | A failed parcel or zoning import left copied source files in the store. | The new dataset pipeline removes copies made by the failed attempt. | `test_gis_datasets::test_failed_import_…` |
 | P18 | Low | Each backup left `-shm`/`-wal` sidecar files. | Backups written as single files; immutable read-only verification. | `test_p18_p19_…` |
 | P19 | Low | Retention deleted the pre-migration safety backup. | Only daily backups are pruned. | `test_p18_p19_…` |
+| P20 | Low | Drawing pages did not ask printers not to scale, so *fit to page* broke the 1:N scale. | `/PrintScaling /None` in the PDF. | `test_p20_p11_…` |
+| P11 | Low | `∩` in a report string had no glyph. | Replaced; report strings checked for unsupported symbols. | `test_p20_p11_…` |
+| W1 | Low | Found by the Windows CI run: on Windows any file named like `dwg2dxf` was accepted as the LibreDWG converter (no execute bit), even without an executable extension. | Extension checked against `PATHEXT`. | `test_c14_c15_…` (failed on Windows CI, fixed) |
 
 ## Remaining risks and open items (not fixed in this round)
 
@@ -93,19 +106,13 @@ Also fixed:
 - **A11 (Low):** the recorded projection scale factor uses WGS84 lon/lat instead of the datum's
   own geodetic coordinates. The difference is about 1e-7. It is informational only; areas are
   grid areas.
-- **A13 (Low):** license duplicate detection has four gaps:
-  - values within the 0.005 tolerance count as conflicting;
-  - license numbers are case-sensitive;
-  - floor keys are not trimmed;
-  - a conflict in one attribute blocks the floor area.
 - The FAR and floor-count checks count every floor key, including basements and roofs. This is
   stated as an assumption in the check.
 
 **Reports**
 - **P10 (Low):** a single very long word (a hash or file name) can overflow a table cell.
-- **P11 (Low):** symbols `∩ → ← ✓ ⚠` have no glyph in the bundled fonts.
-- **P20 (Low):** drawing pages do not set "print scaling: none", so a printer's *fit to page* can
-  break the 1:N scale. Print at 100 %.
+- **P11 (rest):** the symbols `→ ← ✓ ⚠` have no glyph in the bundled fonts. Report strings no
+  longer use them; user-entered text could still contain them.
 - **Report approval workflow:**
   - the same user can approve without a reviewed revision;
   - older approved exports are not marked stale;

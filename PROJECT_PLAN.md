@@ -74,7 +74,7 @@ at the end of this file.
 6. **Data integrity.** Original files are never overwritten (content-hashed copies).
    Calculations are pinned to a rule version and to license record revisions.
 
-## Feature status (2026-10-18, 227 automated tests passing, 3 skipped without local DWG fixtures / AutoCAD setback references)
+## Feature status (2026-10-18, 229 automated tests passing, 3 skipped without local DWG fixtures / AutoCAD setback references)
 
 Audit findings, fixes and open risks: [`AUDIT_REPORT.md`](AUDIT_REPORT.md). Release status: [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md).
 

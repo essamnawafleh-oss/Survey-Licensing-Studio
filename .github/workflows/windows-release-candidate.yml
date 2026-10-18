@@ -52,7 +52,11 @@ jobs:
       - name: Test suite
         run: |
           . (Join-Path $env:RUNNER_TEMP "logged.ps1")
-          Invoke-Logged "pytest" { python -m pytest -q -rfE -p no:cacheprovider }
+          Invoke-Logged "pytest" { python -m pytest -q -rfEs -p no:cacheprovider }
+          $last = Get-Content (Join-Path $env:RUNNER_TEMP "pytest.txt") -Tail 1
+          Write-Output "::notice title=pytest summary::$last"
+          Get-Content (Join-Path $env:RUNNER_TEMP "pytest.txt") | Select-String -Pattern "^SKIPPED" |
+              ForEach-Object { Write-Output "::notice title=pytest skipped::$($_.Line)" }
 
       - name: PyInstaller build
         run: |
