@@ -175,6 +175,31 @@ class CaseService:
                              **{k: v for k, v in record.items() if k != "residuals"})
         return LoadedDrawing(loaded.record, rev, out)
 
+    # -- zoning register -------------------------------------------------------------------------
+
+    def zoning_for_boundary(self, drawing: Drawing, boundary_entity_id: str, crs_code: str = "") -> dict[str, Any] | None:
+        """Zone overlay of the boundary polygon.
+
+        Only when the case grid is the zoning layer's grid (e.g. ESRI:102158 / EPSG:3066); a layer
+        imported without a .prj is assumed to be in the case grid.
+        """
+        from shapely.geometry import Polygon
+
+        from ..cad.model import flatten_bulge_polyline
+        from ..core.crs import same_grid
+
+        layer = self.ws.zoning.active_layer()
+        e = drawing.entities.get(boundary_entity_id) if boundary_entity_id else None
+        if layer is None or e is None or e.kind != "polyline" or not e.data.get("closed"):
+            return None
+        if layer["crs_code"] and not same_grid(crs_code, layer["crs_code"]):
+            return None
+        poly = Polygon(flatten_bulge_polyline(e.data["points"], True, 128))
+        if not poly.is_valid or poly.area <= 0:
+            return None
+        ov = self.ws.zoning.overlay(poly, layer["id"])
+        return {"layer": layer["label"], "layer_id": layer["id"], **ov.to_dict()} if ov else None
+
     # -- cadastral parcel register -------------------------------------------------------------
 
     def cadastre_entities(self, case_id: str, parcel_ids: list[int], neighbours_margin: float = 30.0
@@ -248,6 +273,13 @@ class CaseService:
         known = {fd.key for fd in self.ws.cases.field_defs()}
         updates = {"village": p.village, "basin": p.basin, "neighbourhood": p.sector, "plot_number": p.parcel_no,
                    "sheet_no": p.sheet, "dls_key": p.dls_key}
+        # Land use from the zoning register: applied only when the parcel lies in exactly one zone,
+        # the case has no classification yet, and the code exists in the applied rule version.
+        ov = self.ws.zoning.overlay(p.geometry) if p.geometry is not None else None
+        if ov is not None and ov.single_zone and not case.land_use_code and case.rule_version_id:
+            codes = {r.code for r in self.ws.rules.rules(case.rule_version_id)}
+            if ov.single_zone.zone_id in codes:
+                case.land_use_code = ov.single_zone.zone_id
         case.fields.update({k: v for k, v in updates.items() if k in known and v})
         if p.dls_key:
             case.parcel_identifier = p.dls_key
@@ -297,6 +329,7 @@ class CaseService:
             rule_override=(ov.to_dict() if (ov := self.ws.rules.case_override(case_id, version_id, case.land_use_code))
                            else None),
         )
+        inputs.zoning = self.zoning_for_boundary(loaded.drawing, parcel.boundary_entity_id, case.units.crs_id)
         if parcel.verified and not verified:
             inputs.extraction_issues.append({
                 "severity": "error", "code": "boundary_changed",

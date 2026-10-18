@@ -117,6 +117,7 @@ class MainWindow(QMainWindow):
         m_file.addAction(self._act("act.users", self.manage_users))
         m_file.addAction(self._act("act.case_fields", self.manage_fields))
         m_file.addAction(self._act("act.cadastre_import", self.import_cadastre))
+        m_file.addAction(self._act("act.zoning_import", self.import_zoning))
         m_file.addSeparator()
         m_file.addAction(self._act("act.exit", self.close, "Ctrl+Q"))
 
@@ -768,6 +769,11 @@ class MainWindow(QMainWindow):
 
         CadastreImportDialog(self.ws, self.run_busy, self).exec()
 
+    def import_zoning(self) -> None:
+        from .dialogs.cadastre_dialogs import CadastreImportDialog
+
+        CadastreImportDialog(self.ws, self.run_busy, self, kind="zoning").exec()
+
     def find_parcel(self) -> None:
         if self.ws.cadastre.active_layer() is None:
             QMessageBox.information(self, tr("act.find_parcel"), tr("cad.none"))
@@ -833,6 +839,21 @@ class MainWindow(QMainWindow):
             self.canvas.update()
         p = self.ws.cadastre.get(parcel_ids[0])
         self.cmd.message(tr("cad.used", key=p.dls_key or p.label, area=f"{p.area_m2 or 0:,.2f}"), "ok")
+        ov = self.ws.zoning.overlay(p.geometry) if p.geometry is not None else None
+        if ov is not None:
+            from .dialogs.cadastre_dialogs import zones_text
+
+            case = self.ws.cases.get(self.case_id)
+            level = "ok" if ov.single_zone else "warn"
+            self.cmd.message(tr("zon.parcel_zones", zones=zones_text(ov)), level)
+            if ov.single_zone and case.land_use_code == ov.single_zone.zone_id:
+                self.cmd.message(tr("zon.applied", code=case.land_use_code), "ok")
+            elif ov.single_zone and case.land_use_code:
+                self.cmd.message(tr("zon.differs", code=case.land_use_code, zone=ov.single_zone.zone_id), "warn")
+            elif ov.single_zone and not case.rule_version_id:
+                self.cmd.message(tr("zon.no_rules"), "warn")
+            elif len(ov.zones) > 1:
+                self.cmd.message(tr("zon.multi_hint"), "warn")
         for w in warnings:
             self.cmd.message(w, "warn")
         self._update_title()

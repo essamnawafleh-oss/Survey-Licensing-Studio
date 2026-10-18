@@ -51,6 +51,8 @@ class CalculationInputs:
     extraction_issues: list[dict[str, str]] = field(default_factory=list)
     # Reviewer-entered values for boundary types whose rule text is conditional (see rules_repo).
     rule_override: dict[str, Any] | None = None
+    # Zone overlay of the boundary from the zoning register (snapshot, see zoning_repo).
+    zoning: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

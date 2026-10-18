@@ -59,6 +59,25 @@ class FieldMapping:
         return "" if v is None else str(v).strip()
 
 
+ZONING_FIELDS = ("zone_id", "zone_name", "key")
+_SUGGEST_ZONING = {
+    "zone_id": ("zone_id", "zoneid", "zone", "landuse_id", "رمز الصفة"),
+    "zone_name": ("الاست", "الاستعمال", "zone_name", "name", "landuse", "صفة الاستعمال", "الصفة"),
+    "key": ("dls_key", "parcel_key"),
+}
+
+
+def suggest_zoning_mapping(field_names: Sequence[str]) -> FieldMapping:
+    norm = {f.casefold(): f for f in field_names}
+    cols = {}
+    for logical, names in _SUGGEST_ZONING.items():
+        for n in names:
+            if n.casefold() in norm:
+                cols[logical] = norm[n.casefold()]
+                break
+    return FieldMapping(cols)
+
+
 def suggest_mapping(field_names: Sequence[str]) -> FieldMapping:
     norm = {f.casefold(): f for f in field_names}
     cols = {}

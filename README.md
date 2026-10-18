@@ -172,6 +172,22 @@ the identifiers, all of them are listed with their areas, and the user selects o
   and verify it as usual.
 - The **Pick parcel** tool (`PP`) does the same with a click on the map.
 
+### Zoning register (land-use zones)
+
+*File → Zoning register* imports the authority's land-use layer (e.g. `intersect.shp`): one
+polygon per zone piece with `ZONE_ID`, the land-use code of the rule table, and its name.
+- **Before importing**, the dialog compares the codes with the newest rule table. It lists
+  codes missing from the table (e.g. `71`) and names that differ.
+- **Find parcel** shows the zones of each result with their share, for example
+  `2 سكن فئة ب (100%)`. Parcels split by a zone boundary list every zone. Overlaps under
+  1 m² or 0.5 % are ignored as digitising slivers.
+- **Using a parcel** fills in the land-use classification automatically only when the parcel
+  lies in a single zone whose code exists in the case's rule table. In every other case a
+  message explains why, and nothing is changed.
+- **The calculation** compares the case classification with the register and warns about a
+  mismatch, a split parcel, no zone, or an uncovered area. The report includes a zone table.
+  The register informs, and the applied classification is always the one chosen in the case.
+
 ## Coordinate system: Jordan TM (JTM)
 
 New cases use the authority's GIS definition **"Jordan_JTM" (ESRI:102158, from the parcel

@@ -104,6 +104,9 @@ class Workspace:
         self.calculations = CalculationRepository(self)
         self.reports = ReportRepository(self)
         self.cadastre = CadastreRepository(self)
+        from .zoning_repo import ZoningRepository
+
+        self.zoning = ZoningRepository(self)
 
     @property
     def db_path(self) -> Path:

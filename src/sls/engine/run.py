@@ -92,6 +92,7 @@ def run_calculation(inputs: CalculationInputs) -> dict[str, Any]:
               "crs": units.crs_id, "crs_kind": units.crs_kind.value}, factor, "m / drawing unit",
               [f"verified by {units.verified_by or 'user'}"])
     _crs_checks(inputs, all_pts, factor, issues, trace, out)
+    _zoning_checks(inputs, issues, trace, out)
     if any(s.approximated for s in inputs.footprints + inputs.linear) or (inputs.parcel and inputs.parcel.approximated):
         issues.append({"severity": "warning", "code": "curves_approximated",
                        "message": "Curved geometry (arcs, circles, splines) was sampled at 256 segments per full "
@@ -279,6 +280,36 @@ def run_calculation(inputs: CalculationInputs) -> dict[str, Any]:
     out["issues"] = issues
     out["trace"] = trace.steps
     return _round(out)
+
+
+def _zoning_checks(inputs: CalculationInputs, issues: list, trace: Trace, out: dict[str, Any]) -> None:  # type: ignore[type-arg]
+    """Compare the case classification with the zoning register overlay of the boundary."""
+    z = inputs.zoning
+    if not z:
+        return
+    out["zoning"] = z
+    zones = z.get("zones", [])
+    code = inputs.land_use_code
+    desc = ", ".join(f"{s['zone_id']} {s['zone_name']} ({s['pct']:.1f}%, {s['area_m2']:.2f} m²)" for s in zones) or "—"
+    trace.add("zoning", "Land-use zones of the boundary (zoning register)", "area(boundary ∩ zone) per zone",
+              {"layer": z.get("layer"), "zones": desc, "uncovered_m2": z.get("uncovered_m2")},
+              len(zones), "zones", [str(z.get("layer"))])
+    if not zones:
+        issues.append({"severity": "warning", "code": "zoning_none",
+                       "message": "The boundary lies in no coded zone of the zoning register.", "entity_id": ""})
+    elif len(zones) > 1:
+        issues.append({"severity": "warning", "code": "zoning_multiple",
+                       "message": f"The parcel lies in {len(zones)} zones: {desc}. This calculation applies one "
+                                  f"classification ({code or '—'}) to the whole parcel; review the split.",
+                       "entity_id": ""})
+    if code and zones and code not in {s["zone_id"] for s in zones}:
+        issues.append({"severity": "warning", "code": "zoning_mismatch",
+                       "message": f"The selected classification {code} differs from the zoning register: {desc}.",
+                       "entity_id": ""})
+    if z.get("uncovered_m2", 0) >= 1.0:
+        issues.append({"severity": "warning", "code": "zoning_gap",
+                       "message": f"{z['uncovered_m2']:.2f} m² of the parcel is not covered by any zone polygon.",
+                       "entity_id": ""})
 
 
 def _crs_checks(inputs: CalculationInputs, pts: list, factor: float, issues: list, trace: Trace,  # type: ignore[type-arg]

@@ -148,3 +148,23 @@ Each decision records context, the choice, and its consequences. Add new entries
   - Point picking takes the smallest polygon containing the point, and lists any others.
   - Using a parcel fills the case fields and sets an **unverified** boundary candidate. Register geometry carries `meta.source = "cadastre"`, the layer version and the GLOBALID.
 - **Default CRS:** changed to ESRI:102158, the authority's own definition.
+
+## TD-25 Zoning register (land-use zones per parcel)
+- **Context:** the authority's `intersect` layer (Shapefile, 23,400 polygons, Jordan_JTM, UTF-8) is the parcel layer cut by the regulatory-plan zones. Each piece carries `ZONE_ID` (the land-use code of the rule table) and the land-use name. A parcel crossing a zone boundary appears as several pieces.
+- **Choice:**
+  - Import the layer as a separate, versioned register (`zoning_layers` and `zoning_pieces`, migration 4) with the same rules as TD-24: source files copied with SHA-256, nothing repaired, and permission `import_zoning` (reviewer and admin).
+  - The zones of a parcel are computed **geometrically** (area of parcel ∩ zone polygons), not by matching keys. This works for repeated or missing keys and for drawn boundaries.
+  - Overlaps below 1 m² or 0.5 % of the parcel are digitising **slivers**. They are recorded but never counted as a zone.
+  - Pieces with `ZONE_ID` 0 or blank are reported as "zone polygon without code". Parcel area outside every piece is reported as a gap.
+  - Invalid pieces are `buffer(0)`-ed only to measure the overlap. The stored geometry is unchanged.
+  - The overlay is applied only when the case grid equals the layer grid (`same_grid`). A layer without `.prj` is assumed to be in the case grid.
+- **Effect on the case:**
+  - When a parcel is used from the register, the land-use code is filled in **only** if the parcel lies in exactly one coded zone, the case has no code yet, and the code exists in the case's rule version. Otherwise the user is told why it was not filled in, and nothing changes.
+  - The calculation records the overlay in its inputs, so it is hashed and reproducible. It adds the trace step "zoning" and these warnings: `zoning_none`, `zoning_multiple` (one classification applied to a split parcel), `zoning_mismatch` (case code ≠ register) and `zoning_gap`.
+  - The legal decision stays with the user: the register never overrides the selected classification.
+- **Real data findings:**
+  - 804 pieces have ZONE_ID 0.
+  - Zone 71 does not exist in the rule table.
+  - 1,592 parcel keys span several zones.
+  - In a sample of 3,000 parcels: 2,709 lie in one zone, 147 in two, and 63 in none.
+  - The import dialog cross-checks the codes and names against the newest rule version.

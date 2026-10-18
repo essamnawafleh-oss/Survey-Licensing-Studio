@@ -364,6 +364,43 @@ INSERT OR IGNORE INTO case_field_defs(key,label_ar,label_en,field_type,sort_orde
     VALUES ('dls_key','المفتاح الموحد (دائرة الأراضي)','DLS parcel key','text',10);
 """,
     ),
+    (
+        4,
+        "zoning register (land-use zone polygons, e.g. parcels x zoning intersect layer)",
+        """
+CREATE TABLE zoning_layers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    crs_code TEXT NOT NULL DEFAULT '',
+    encoding TEXT NOT NULL,
+    mapping_json TEXT NOT NULL,
+    source_json TEXT NOT NULL,
+    summary_json TEXT NOT NULL,
+    record_count INTEGER NOT NULL,
+    imported_at TEXT NOT NULL,
+    imported_by TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    UNIQUE (name, version)
+);
+
+CREATE TABLE zoning_pieces (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    layer_id TEXT NOT NULL REFERENCES zoning_layers(id) ON DELETE CASCADE,
+    fid INTEGER NOT NULL,
+    zone_id TEXT NOT NULL DEFAULT '',
+    zone_name TEXT NOT NULL DEFAULT '',
+    dls_key TEXT NOT NULL DEFAULT '',
+    wkb BLOB,
+    area_m2 REAL,
+    minx REAL, miny REAL, maxx REAL, maxy REAL,
+    valid INTEGER NOT NULL,
+    issue TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX ix_zone_bbox ON zoning_pieces(layer_id, minx, maxx, miny, maxy);
+CREATE INDEX ix_zone_key ON zoning_pieces(layer_id, dls_key);
+""",
+    ),
 ]
 
 # Default configurable case fields, inserted once by migration seeding (editable later).

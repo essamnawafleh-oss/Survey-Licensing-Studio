@@ -72,7 +72,7 @@ at the end of this file.
 6. **Data integrity.** Original files are never overwritten (content-hashed copies).
    Calculations are pinned to a rule version and to license record revisions.
 
-## Feature status (2026-10-18, 130 automated tests passing, 2 skipped without local DWG fixtures)
+## Feature status (2026-10-18, 139 automated tests passing, 2 skipped without local DWG fixtures)
 
 | Area | Feature | Status | Evidence / notes |
 |------|---------|--------|------------------|
@@ -110,6 +110,7 @@ at the end of this file.
 | — | Regulatory plan: separate CRS, extent check, control-point transformation as new revision | ✅ | `tests/test_transform.py` |
 | M6 | DWG import (ODA File Converter or LibreDWG) | 🟡 | verified on the real PDTRA regulatory plan with LibreDWG 0.9.3, with documented converter losses (TD-22); ODA path and DWG writing unverified |
 | — | Parcel register from GIS Shapefile (DLS keys), Find parcel, register-backed Pick parcel, case fields auto-filled | ✅ | `tests/test_cadastre.py`; real Petra layer (20,197 parcels) imported and used locally |
+| — | Zoning register (ZONE_ID per piece): geometric overlay, slivers/gaps, auto land use for single-zone parcels, engine warnings, report table | ✅ | `tests/test_zoning.py`; real layer (23,400 pieces) imported in 3.3 s |
 | — | Jordan TM (ESRI:102158 / EPSG:3066) default, coordinate checks, scale factor, lat/lon display, Pick parcel | ✅ | `tests/test_crs_jtm.py`; real plan maps to Wadi Musa |
 | M6 | Windows packaging (PyInstaller spec + build script) | 🟡 | build-tested on Linux only |
 

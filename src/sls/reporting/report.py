@@ -396,6 +396,20 @@ def _body(data: ReportData, opts: ReportOptions, nf: NumberFormat, manifest_entr
                 story.append(Spacer(1, 2 * mm))
                 story.append(ctx.kv(extra, tw))
             story.append(Spacer(1, 3 * mm))
+        zoning = results.get("zoning")
+        if zoning:
+            rows = [[z["zone_id"], z["zone_name"] or "—", f"{ctx.area(z['area_m2'])} m²", f"{z['pct']:.1f}%"]
+                    for z in zoning.get("zones", [])]
+            rows += [["—", ctx.t("rpt.zone_uncoded"), f"{ctx.area(z['area_m2'])} m²", f"{z['pct']:.1f}%"]
+                     for z in zoning.get("unzoned", [])]
+            if zoning.get("uncovered_m2", 0) >= 1.0:
+                rows.append(["—", ctx.t("rpt.zone_gap"), f"{ctx.area(zoning['uncovered_m2'])} m²", ""])
+            story.append(ctx.p(f"{ctx.t('rpt.zoning')}: {zoning.get('layer', '')}", 9.5, bold=True))
+            story.append(ctx.table([ctx.t("rpt.zone_code"), ctx.t("rpt.zone_name"), ctx.t("rpt.zone_area"),
+                                    ctx.t("rpt.zone_share")], rows or [["—", ctx.t("zon.none"), "", ""]],
+                                   [tw * 0.15, tw * 0.45, tw * 0.22, tw * 0.18]))
+            story.append(ctx.p(ctx.t("rpt.zoning_note"), 8, color=(0.4, 0.4, 0.4)))
+            story.append(Spacer(1, 3 * mm))
         parcel = results.get("parcel")
         sb = results.get("setback")
         if parcel:
