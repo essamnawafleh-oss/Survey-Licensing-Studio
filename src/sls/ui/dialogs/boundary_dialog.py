@@ -6,7 +6,9 @@ import math
 from PySide6.QtWidgets import (QComboBox, QDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout,
                                QWidget)
 
-from ...cad.model import Drawing
+from shapely.geometry import LineString
+
+from ...cad.model import Drawing, flatten_bulge_polyline, logical_boundary
 from ...core.i18n import tr
 from ...persistence.drawings_repo import ParcelRecord
 from ...persistence.workspace import Workspace
@@ -73,8 +75,13 @@ class BoundaryDialog(QDialog):
         if b is None:
             self.info.setText(tr("boundary.none"))
             return
-        pts = [(p[0], p[1]) for p in b.data["points"]]
-        if any(len(p) > 2 and abs(p[2]) > 1e-12 for p in b.data["points"]):
+        from ...engine.inputs import _tolerance
+
+        case = self.ws.cases.get(self.case_id)
+        # the same logical edges the calculation uses (duplicate/closing vertices merged; one row per arc)
+        norm = logical_boundary(b.data["points"], bool(b.data.get("closed")), _tolerance(case.units))
+        pts = [(p[0], p[1]) for p in norm]
+        if any(abs(p[2]) > 1e-12 for p in norm):
             self.info.setText(tr("boundary.has_arcs"))
         current = [[p[0], p[1]] for p in b.data["points"]]
         state = tr("boundary.verified", user=self.parcel.verified_by, at=self.parcel.verified_at) \
@@ -85,7 +92,8 @@ class BoundaryDialog(QDialog):
         labels = []
         for i in range(len(pts)):
             a, c = pts[i], pts[(i + 1) % len(pts)]
-            length = math.dist(a, c)
+            length = math.dist(a, c) if abs(norm[i][2]) < 1e-12 else \
+                LineString(flatten_bulge_polyline([norm[i], c], False, 128)).length  # arc length
             r = self.table.rowCount()
             self.table.insertRow(r)
             from PySide6.QtWidgets import QTableWidgetItem

@@ -144,6 +144,25 @@ def arc_points(center, radius, start_deg, end_deg, segments_per_circle=128):  # 
              cy + radius * math.sin(math.radians(start_deg + sweep * i / n))) for i in range(n + 1)]
 
 
+def logical_boundary(points, closed: bool, tol: float = 0.0) -> list[tuple[float, float, float]]:  # type: ignore[no-untyped-def]
+    """Vertices of a boundary as the user classifies it: one edge per remaining vertex.
+
+    Consecutive vertices within ``tol`` (drawing units) collapse into one (the zero-length edge
+    disappears and the later vertex's bulge is kept), and a repeated closing vertex is dropped.
+    The boundary dialog and the calculation both use this, so they always count the same edges.
+    """
+    out: list[tuple[float, float, float]] = []
+    for p in points:
+        q = (float(p[0]), float(p[1]), float(p[2]) if len(p) > 2 else 0.0)
+        if out and math.hypot(q[0] - out[-1][0], q[1] - out[-1][1]) <= tol:
+            out[-1] = (out[-1][0], out[-1][1], q[2])
+            continue
+        out.append(q)
+    if closed and len(out) > 1 and math.hypot(out[-1][0] - out[0][0], out[-1][1] - out[0][1]) <= tol:
+        out.pop()
+    return out
+
+
 def flatten_bulge_polyline(points, closed, segments_per_circle=128):  # type: ignore[no-untyped-def]
     """Expand DXF bulge arcs into points. Point items are (x, y) or (x, y, bulge)."""
     pts = [(p[0], p[1], p[2] if len(p) > 2 else 0.0) for p in points]

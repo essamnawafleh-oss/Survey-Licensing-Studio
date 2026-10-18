@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass, field
+import math
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 from ..cad.model import Drawing, Entity
@@ -84,6 +85,18 @@ class CalculationInputs:
     def input_hash(self) -> str:
         return hashlib.sha256(self.canonical_json().encode("utf-8")).hexdigest()
 
+    def content_key(self) -> str:
+        """Hash of what the calculation depends on, without the drawing revision id.
+
+        Used to decide whether a stored calculation is out of date: saving an unchanged drawing
+        (e.g. after adding generated layers, which are ignored as inputs) creates a new revision but
+        does not change the inputs (``drawing_content_sha256`` covers the content).
+        """
+        d = json.loads(self.canonical_json())
+        d.pop("drawing_revision_id", None)
+        return hashlib.sha256(json.dumps(d, ensure_ascii=False, sort_keys=True,
+                                         separators=(",", ":")).encode("utf-8")).hexdigest()
+
     @property
     def drawing_units(self) -> DrawingUnits:
         return DrawingUnits.from_dict(self.units)
@@ -113,6 +126,34 @@ def _shape(e: Entity, **extra: Any) -> ShapeInput:
                       approximated=e.has_curves() or bool(e.meta.get("approximated_from")), **extra)
 
 
+def _tolerance(units: DrawingUnits) -> float:
+    """1 mm in drawing units when the units are known and metric-convertible, else exact coincidence only."""
+    try:
+        return 0.001 / units.require_metric_planar()
+    except Exception:  # noqa: BLE001 - unverified/unknown units: no tolerance is assumed
+        return 0.0
+
+
+def _parcel_by_logical_edges(ent: Entity, edge_types: list[str], tol: float) -> tuple[ShapeInput, list[str]]:
+    """Boundary points with each logical edge's classification copied onto its arc segments."""
+    from ..cad.model import flatten_bulge_polyline, logical_boundary
+
+    norm = logical_boundary(ent.data["points"], True, tol)
+    if len(norm) < 3 or len(edge_types) != len(norm):
+        return _shape(ent), edge_types  # the engine reports the mismatch / degenerate boundary
+    pts: list[list[float]] = []
+    types: list[str] = []
+    n = len(norm)
+    for i in range(n):
+        a, b = norm[i], norm[(i + 1) % n]
+        seg = flatten_bulge_polyline([a, (b[0], b[1])], False, SEGMENTS_PER_CIRCLE) if abs(a[2]) > 1e-12 \
+            else [(a[0], a[1]), (b[0], b[1])]
+        for q in seg[:-1]:
+            pts.append([float(q[0]), float(q[1])])
+            types.append(edge_types[i])
+    return ShapeInput(ent.id, pts, True, ent.layer, approximated=ent.has_curves()), types
+
+
 def extract_inputs(drawing: Drawing, *, boundary_entity_id: str, parcel_verified: bool,
                    edge_types: list[str], rule: LandUseRule | None, rule_version_id: str | None,
                    rule_version_verified: bool, land_use_code: str, licenses: list[LicenseRecordInput],
@@ -131,6 +172,8 @@ def extract_inputs(drawing: Drawing, *, boundary_entity_id: str, parcel_verified
             issues.append({"severity": "error", "code": "boundary_kind",
                            "message": f"Property boundary must be a closed polyline, not {ent.kind}.",
                            "entity_id": ent.id})
+        elif ent.kind == "polyline" and ent.data.get("closed"):
+            parcel, edge_types = _parcel_by_logical_edges(ent, list(edge_types), _tolerance(units))
         else:
             parcel = _shape(ent)
 
@@ -152,13 +195,28 @@ def extract_inputs(drawing: Drawing, *, boundary_entity_id: str, parcel_verified
                                           "(set the layer floor or the entity floor).", "entity_id": e.id})
                 continue
             if not e.is_closed_shape():
+                pts = e.data.get("points", []) if e.kind == "polyline" else []
+                tol = _tolerance(units)
+                if len(pts) >= 4 and math.hypot(pts[0][0] - pts[-1][0], pts[0][1] - pts[-1][1]) <= tol:
+                    # first and last vertex coincide (within 1 mm): closed in geometry, flag not set
+                    shp = _shape(e, floor_key=floor)
+                    footprints.append(replace(shp, points=shp.points[:-1], closed=True))
+                    issues.append({"severity": "warning", "code": "closed_by_coincident_ends",
+                                   "message": f"Building outline on layer '{e.layer}' is not flagged closed but its "
+                                              "first and last vertices coincide; it is treated as closed.",
+                                   "entity_id": e.id})
+                    continue
                 issues.append({"severity": "error", "code": "open_footprint",
                                "message": f"Building outline on layer '{e.layer}' is not closed; it is "
                                           "excluded from area totals.", "entity_id": e.id})
                 continue
             footprints.append(_shape(e, floor_key=floor))
-        elif layer.role in ("wall", "fence") and e.kind in ("line", "polyline", "arc"):
+        elif layer.role in ("wall", "fence") and e.kind in ("line", "polyline", "arc", "circle"):
             linear.append(_shape(e, kind=layer.role))
+        elif layer.role in ("wall", "fence") and e.kind not in ("text", "point", "dimension"):
+            issues.append({"severity": "warning", "code": "linear_kind_ignored",
+                           "message": f"{e.kind} on {layer.role} layer '{e.layer}' is not counted in lengths.",
+                           "entity_id": e.id})
         elif layer.role == "road" and e.kind in ("line", "polyline"):
             roads.append(_shape(e))
 

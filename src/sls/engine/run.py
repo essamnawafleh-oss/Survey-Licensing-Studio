@@ -24,7 +24,7 @@ from ..geometry.setbacks import METHOD_OFFSET_CORNER, SetbackResult, setback_fun
 from ..licensing.reconcile import reconcile
 from .inputs import CalculationInputs
 
-ENGINE_VERSION = "1.0.0"
+ENGINE_VERSION = "1.1.0"  # 1.1.0: outside-parcel and nested-outline issues, unknown-CRS warning (audit)
 DISCLAIMER_EN = ("Preliminary rule check only. Geometric results do not constitute a legal licensing decision; "
                  "the decision rests with authorised staff.")
 DISCLAIMER_AR = "فحص أولي للأنظمة فقط. النتائج الهندسية لا تشكل قراراً قانونياً بالترخيص؛ القرار للموظف المخول."
@@ -212,6 +212,15 @@ def run_calculation(inputs: CalculationInputs) -> dict[str, Any]:
         if poly is not None:
             fps.append(Footprint(s.entity_id, s.floor_key, poly))
     floors = floor_areas(fps, inputs.floor_order)
+    for a in fps:
+        for b in fps:
+            if a is not b and a.floor_key == b.floor_key and b.polygon.area < a.polygon.area \
+                    and a.polygon.contains(b.polygon):
+                issues.append({"severity": "warning", "code": "nested_outline",
+                               "message": f"Floor {a.floor_key}: an outline ({b.polygon.area:.2f} m²) lies entirely "
+                                          "inside another; it is counted as built area. If it is a courtyard or "
+                                          "light well, draw the floor as one outline with the opening excluded.",
+                               "entity_id": b.entity_id})
     floor_rows: list[dict[str, Any]] = []
     for fa in floors:
         row: dict[str, Any] = {"floor_key": fa.floor_key, "area_m2": fa.area_m2, "sum_of_parts_m2": fa.sum_of_parts_m2,
@@ -226,6 +235,9 @@ def run_calculation(inputs: CalculationInputs) -> dict[str, Any]:
             inter = setback_intersections(fa, parcel, setback.setback_zone if setback else Polygon())
             row["outside_parcel_m2"] = inter.outside_parcel_m2
             row["outside_parcel_wkt"] = _wkt(inter.outside_parcel, frame)
+            if inter.outside_parcel_m2 > 0.01:
+                warns.append(f"Floor {fa.floor_key}: {inter.outside_parcel_m2:.2f} m² of the building lies outside "
+                             "the property boundary (neighbouring land or road).")
             if setback is not None:
                 row["in_setback_zone_m2"] = inter.in_setback_zone_m2
                 row["violation_wkt"] = _wkt(inter.in_setback_zone, frame)
@@ -403,6 +415,11 @@ def _crs_checks(inputs: CalculationInputs, pts: list, factor: float, issues: lis
     try:
         info = describe(code)
     except CrsUnavailable:
+        if inputs.drawing_units.crs_kind.value != "projected":
+            return  # a local / site system is not looked up in the registry
+        issues.append({"severity": "warning", "code": "crs_unknown",
+                       "message": f"Coordinate system '{code}' is not recognised; the coordinates could not be "
+                                  "checked against it. Check the code in Case details.", "entity_id": ""})
         return
     if info.kind != "projected":
         return
@@ -442,8 +459,13 @@ def _eligibility(rule, parcel, plan, total_measured, floors, setback, plan_row, 
         not_evaluated("setbacks", "Setback geometry was not calculated.")
     else:
         v = plan_row.get("in_setback_zone_m2", 0.0)
-        checks.append({"key": "setbacks", "status": "fail" if v > 0.01 else "pass", "value": v, "limit": 0.0,
-                       "unit": "m²", "excess": v})
+        outside = plan_row.get("outside_parcel_m2", 0.0) or 0.0
+        check = {"key": "setbacks", "status": "fail" if v > 0.01 or outside > 0.01 else "pass", "value": v,
+                 "limit": 0.0, "unit": "m²", "excess": v}
+        if outside > 0.01:
+            check["outside_parcel_m2"] = outside
+            check["reason"] = f"{outside:.2f} m² of the building lies outside the property boundary."
+        checks.append(check)
     if rule.max_coverage_pct is None:
         not_evaluated("coverage", f"Rule text '{rule.coverage_raw}' is not a plain percentage." if rule.coverage_raw
                       else "Maximum coverage is not defined in the applied rule.")

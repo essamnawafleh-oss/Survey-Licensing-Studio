@@ -37,8 +37,8 @@ class ReportService:
         if unverified:
             blockers.append("Unverified license records: " + ", ".join(unverified))
         if calc is not None and calc.results.get("status") == "ok":
-            fresh = self.cases.build_inputs(case_id).input_hash()
-            if fresh != calc.input_hash:
+            # content, not the drawing revision id: re-saving unchanged geometry is not a change
+            if self.cases.build_inputs(case_id).content_key() != calc.inputs.content_key():
                 blockers.append("The case changed after the latest calculation; recalculate first.")
         return blockers
 

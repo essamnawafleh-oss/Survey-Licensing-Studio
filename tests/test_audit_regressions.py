@@ -377,3 +377,128 @@ def test_c14_c15_dwg_converter_failures_are_actionable(tmp_path, monkeypatch):
     monkeypatch.setattr(dwg, "_convert_oda", lambda *a, **k: [])  # "succeeds" but writes nothing
     with pytest.raises(dwg.DwgUnavailableError, match="wrote no DWG"):
         dwg.export_dwg(Drawing(), tmp_path / "out.dwg", str(oda))
+
+
+# A4-A8, A10, A12, engine version -------------------------------------------------------------------
+
+def _calc_drawing(units=None):
+    from sls.cad.model import Drawing
+    from sls.core.units import CrsKind, DrawingUnits, LengthUnit
+
+    units = units or DrawingUnits(LengthUnit.METER, True, "synthetic-local", CrsKind.LOCAL, "tester")
+    d = Drawing.with_default_layers(units)
+    d.ensure_layer("PB", role="property_boundary")
+    d.ensure_layer("BLD_G", role="building", floor_key="G")
+    d.ensure_layer("FENCE", role="fence")
+    return d, units
+
+
+def _poly(d, layer, pts, closed=True):
+    from sls.cad.model import Entity
+
+    return d.add(Entity("polyline", layer, {"points": [list(p) for p in pts], "closed": closed})).id
+
+
+def _run(d, units, bid, types):
+    from sls.engine.inputs import extract_inputs
+    from sls.engine.run import run_calculation
+    from sls.rules.excel_rules import LandUseRule
+
+    rule = LandUseRule("SYN-B", {"front": 4, "side": 3, "rear": 3}, 4, "x", "B", max_coverage_pct=80)
+    inputs = extract_inputs(d, boundary_entity_id=bid, parcel_verified=True, edge_types=types, rule=rule,
+                            rule_version_id="rv", rule_version_verified=True, land_use_code="SYN-B", licenses=[],
+                            units=units)
+    return inputs, run_calculation(inputs)
+
+
+RECT20 = [(0, 0), (20, 0), (20, 30), (0, 30)]
+
+
+def test_a4_building_outside_the_parcel_is_flagged():
+    d, u = _calc_drawing()
+    bid = _poly(d, "PB", RECT20)
+    _poly(d, "BLD_G", [(30, 5), (40, 5), (40, 15), (30, 15)])  # entirely on the neighbour's land
+    _, r = _run(d, u, bid, ["front", "side", "rear", "side"])
+    assert any("outside the property boundary" in i["message"] for i in r["issues"])
+    sb = next(c for c in r["eligibility"]["checks"] if c["key"] == "setbacks")
+    assert sb["status"] == "fail" and sb["outside_parcel_m2"] == pytest.approx(100)
+
+
+def test_a6_outline_with_coincident_ends_counts_as_closed():
+    d, u = _calc_drawing()
+    bid = _poly(d, "PB", RECT20)
+    _poly(d, "BLD_G", [(5, 5), (15, 5), (15, 15), (5, 15), (5, 5.0002)], closed=False)  # ends 0.2 mm apart
+    _, r = _run(d, u, bid, ["front", "side", "rear", "side"])
+    assert r["floors"][0]["area_m2"] == pytest.approx(100, abs=0.01)
+    assert "closed_by_coincident_ends" in {i["code"] for i in r["issues"]}
+
+
+def test_a7_dialog_and_engine_count_the_same_edges():
+    from sls.cad.model import logical_boundary
+
+    cases = {
+        "repeated closing vertex": [(0, 0), (20, 0), (20, 30), (0, 30), (0, 0)],
+        "near-duplicate vertex": [(0, 0), (10, 0), (10.0005, 0), (20, 0), (20, 30), (0, 30)],
+        "arc on edge 2": [(0, 0), (20, 0, 0.4), (20, 30), (0, 30)],
+    }
+    for name, pts in cases.items():
+        d, u = _calc_drawing()
+        bid = _poly(d, "PB", pts)
+        n = len(logical_boundary(pts, True, 0.001))  # rows the boundary dialog shows
+        types = (["front", "side", "rear", "side"] * 2)[:n]
+        _, r = _run(d, u, bid, types)
+        assert not r["errors"], (name, r["errors"])
+        assert r["setback"]["buildable_area_m2"] > 0
+
+
+def test_a8_nested_outline_is_flagged_as_possible_courtyard():
+    d, u = _calc_drawing()
+    bid = _poly(d, "PB", [(0, 0), (60, 0), (60, 60), (0, 60)])
+    _poly(d, "BLD_G", [(10, 10), (50, 10), (50, 50), (10, 50)])
+    _poly(d, "BLD_G", [(20, 20), (40, 20), (40, 40), (20, 40)])
+    _, r = _run(d, u, bid, ["side"] * 4)
+    assert "nested_outline" in {i["code"] for i in r["issues"]}
+
+
+def test_a10_circle_on_fence_layer_is_counted():
+    from sls.cad.model import Entity
+
+    d, u = _calc_drawing()
+    bid = _poly(d, "PB", RECT20)
+    d.add(Entity("line", "FENCE", {"p1": [0, -1], "p2": [30, -1]}))
+    d.add(Entity("circle", "FENCE", {"center": [50, 50], "radius": 3.0}))
+    _, r = _run(d, u, bid, ["front", "side", "rear", "side"])
+    fence = next(x for x in r["lengths"] if x["kind"] == "fence")
+    assert fence["length_m"] == pytest.approx(30 + 2 * math.pi * 3, abs=0.01)
+
+
+def test_a12_unknown_projected_crs_is_warned():
+    from sls.core.units import CrsKind, DrawingUnits, LengthUnit
+
+    u = DrawingUnits(LengthUnit.METER, True, "EPSG:30666", CrsKind.PROJECTED, "tester")
+    d, _ = _calc_drawing(u)
+    bid = _poly(d, "PB", [(353000, 355000), (353030, 355000), (353030, 355020), (353000, 355020)])
+    _, r = _run(d, u, bid, ["front", "side", "rear", "side"])
+    assert "crs_unknown" in {i["code"] for i in r["issues"]}
+
+
+def test_a5_saving_unchanged_geometry_does_not_make_the_calculation_stale(full_case):
+    from sls.services.case_service import CaseService
+    from sls.services.report_service import ReportService
+
+    ws, case, calc = full_case["ws"], full_case["case"], full_case["calc"]
+    svc = CaseService(ws)
+    loaded = svc.survey_drawing(case.id)
+    svc.apply_derived_geometry(loaded.drawing, calc.results, calc.id)   # generated layers only
+    ws.drawings.save_revision(ADMIN, loaded.record.id, loaded.drawing, "derived geometry")
+    assert svc.build_inputs(case.id).drawing_revision_id != calc.inputs.drawing_revision_id
+    blockers = ReportService(ws).approval_blockers(case.id, "approved")
+    assert not any("changed after the latest calculation" in b for b in blockers)
+
+
+def test_engine_version_change_is_explained_by_reproduce(full_case):
+    ws, calc = full_case["ws"], full_case["calc"]
+    with ws.db.transaction():
+        ws.db.execute("UPDATE calculations SET engine_version='1.0.0' WHERE id=?", (calc.id,))
+    ok, detail = ws.calculations.reproduce(calc.id)
+    assert not ok and "made with engine 1.0.0" in detail  # results now carry engine 1.1.0 behaviour/version

@@ -87,5 +87,14 @@ class CalculationRepository:
         stored = self.db.query_one("SELECT inputs_json FROM calculations WHERE id=?", (calc_id,))["inputs_json"]
         if hashlib.sha256(stored.encode("utf-8")).hexdigest() != rec.input_hash:
             return False, "stored inputs do not match their recorded hash"
-        new_hash = result_hash(run_calculation(rec.inputs))
+        results = run_calculation(rec.inputs)
+        if rec.engine_version != ENGINE_VERSION:
+            # Compare under the engine version recorded with the calculation; a difference then means
+            # the newer engine computes something differently (audit fixes), never altered stored data.
+            same = result_hash({**results, "engine_version": rec.engine_version}) == rec.result_hash
+            if not same:
+                return False, (f"made with engine {rec.engine_version}; the current engine {ENGINE_VERSION} gives a "
+                               "different result. The stored calculation is unchanged; recalculate to update.")
+            return True, result_hash({**results, "engine_version": rec.engine_version})
+        new_hash = result_hash(results)
         return new_hash == rec.result_hash, new_hash
