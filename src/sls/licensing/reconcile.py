@@ -65,8 +65,11 @@ class Reconciliation:
         return asdict(self)
 
 
-def _signature(rec: LicenseRecordInput) -> tuple:
-    return (tuple(sorted(rec.areas)), tuple(sorted(rec.lengths)), rec.issue_date)
+def _normalised(rec: LicenseRecordInput) -> LicenseRecordInput:
+    """Same record with keys stripped (" G" and "G" are the same floor)."""
+    return LicenseRecordInput(rec.id, rec.license_number, rec.revision, rec.status,
+                              tuple((k.strip(), v) for k, v in rec.areas), tuple((k.strip(), v) for k, v in rec.lengths),
+                              rec.issue_date)
 
 
 def reconcile(measured_areas: Mapping[str, float], measured_lengths: Mapping[str, float],
@@ -92,31 +95,56 @@ def reconcile(measured_areas: Mapping[str, float], measured_lengths: Mapping[str
     elif not verified:
         warnings.append("No verified previous license records: licensed quantities are 0 pending verification.")
 
-    # Duplicate license numbers among verified records.
+    # Duplicate license numbers among verified records. Numbers are compared ignoring case and
+    # spacing ("LIC-7" = "lic-7"), keys ignoring surrounding spaces, values within TOLERANCE.
     by_number: dict[str, list[LicenseRecordInput]] = {}
     for rec in verified:
-        by_number.setdefault(rec.license_number.strip(), []).append(rec)
+        number_key = " ".join(rec.license_number.split()).casefold()
+        # entry validation requires a number; a record without one is never merged with another
+        by_number.setdefault(number_key or f"\0{rec.id}", []).append(rec)
     conflicted: dict[str, dict[str, list[str]]] = {"areas": {}, "lengths": {}}
     unique: list[LicenseRecordInput] = []
-    for number, recs in by_number.items():
+    for recs in by_number.values():
+        number = recs[0].license_number.strip()
         if len(recs) == 1:
-            unique.append(recs[0])
+            unique.append(_normalised(recs[0]))
             continue
-        if len({_signature(r) for r in recs}) == 1:
-            warnings.append(f"License {number} was entered {len(recs)} times with identical values; counted once.")
-            unique.append(recs[0])
-        else:
-            msg = f"License {number} has {len(recs)} verified entries with different values."
-            for attr in ("areas", "lengths"):
-                for k in {k for r in recs for k, _ in getattr(r, attr)}:
+        merged = _normalised(recs[0])
+        differing: list[str] = []
+        kept: dict[str, list[tuple[str, float]]] = {"areas": [], "lengths": []}
+        for attr in ("areas", "lengths"):
+            per_key: dict[str, list[float | None]] = {}
+            maps = [dict((k.strip(), v) for k, v in getattr(r, attr)) for r in recs]
+            for k in sorted({k for m in maps for k in m}):
+                per_key[k] = [m.get(k) for m in maps]
+            for k, vals in per_key.items():
+                if None in vals or max(vals) - min(vals) > TOLERANCE:  # type: ignore[type-var,operator]
+                    msg = f"License {number} has {len(recs)} verified entries with different values for '{k}'."
                     conflicted[attr].setdefault(k, []).append(msg)
-            warnings.append(f"Conflicting verified entries for license {number}; affected quantities are blocked.")
+                    differing.append(k)
+                else:
+                    kept[attr].append((k, vals[0]))  # type: ignore[arg-type]
+        dates = {r.issue_date for r in recs}
+        merged = LicenseRecordInput(merged.id, merged.license_number, merged.revision, merged.status,
+                                    tuple(kept["areas"]), tuple(kept["lengths"]), merged.issue_date)
+        unique.append(merged)
+        if differing:
+            warnings.append(f"Conflicting verified entries for license {number} on: {', '.join(differing)}; "
+                            "only those quantities are blocked.")
+        else:
+            warnings.append(f"License {number} was entered {len(recs)} times with identical values; counted once.")
+        if len(dates) > 1:
+            warnings.append(f"License {number} entries have different issue dates: {', '.join(sorted(dates))}.")
 
     def build(measured: Mapping[str, float], attr: str, unit: str) -> list[QuantityLine]:
         licensed: dict[str, float] = {}
         numbers: dict[str, list[str]] = {}
         for rec in unique:
             for key, value in getattr(rec, attr):
+                if value < 0:  # rejected at entry; never allowed to increase the remaining area
+                    conflicted[attr].setdefault(key, []).append(
+                        f"License {rec.license_number} has a negative licensed quantity for '{key}'.")
+                    continue
                 licensed[key] = licensed.get(key, 0.0) + value
                 numbers.setdefault(key, []).append(rec.license_number)
         blocked_keys = conflicted[attr]

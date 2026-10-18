@@ -674,6 +674,11 @@ def build_report(data: ReportData, opts: ReportOptions, nf: NumberFormat | None 
             for page in PdfReader(io.BytesIO(_image_pdf(d.path, d.title, opts.language))).pages:
                 writer.add_page(page)
     _stamp(writer, opts, opts.footer_text)
+    # Drawing pages are at a stated scale (1:N): ask viewers/printers not to "fit to page".
+    from pypdf.generic import NameObject
+
+    writer.create_viewer_preferences()
+    writer.viewer_preferences[NameObject("/PrintScaling")] = NameObject("/None")
     writer.add_metadata({"/Title": f"{opts.report_title or tr('rpt.title', opts.language)} "
                                    f"{data.case.get('case_number', '')}",
                          "/Producer": "Survey & Licensing Studio", "/Creator": "Survey & Licensing Studio",

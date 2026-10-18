@@ -633,7 +633,7 @@
  "rpt.zone_share": "Share",
  "rpt.zone_uncoded": "Zone polygon without code",
  "rpt.zoning": "Zoning register",
- "rpt.zoning_note": "Computed geometrically (boundary ∩ zone polygons). Overlaps below 1 m² or 0.5% are treated as digitising slivers and not listed. Information only: the applied classification is the one shown above.",
+ "rpt.zoning_note": "Computed geometrically (intersection of the boundary with the zone polygons). Overlaps below 1 m² or 0.5% are treated as digitising slivers and not listed. Information only: the applied classification is the one shown above.",
  "rules.browse": "Browse…",
  "rules.extra": "Extra boundary types",
  "rules.extra_hint": "one per line: type=column header",

@@ -633,3 +633,41 @@ def test_dwg_import_report_requires_comparison_with_source(tmp_path, monkeypatch
     _, report = dwg.import_dwg(src)
     assert src.read_bytes() == before                              # source untouched
     assert any("compare layers, entity counts" in a and "1 read error" in a for a in report.actions)
+
+
+def test_p20_p11_report_print_scaling_and_no_missing_symbols(full_case):
+    import io
+
+    from pypdf import PdfReader
+
+    from sls.core.i18n import catalogue
+    from sls.reporting.report import ReportOptions
+    from sls.services.report_service import ReportService
+
+    res = ReportService(full_case["ws"]).preview(full_case["case"].id, ReportOptions(
+        language="en", generated_at="2026-10-18T09:00:00+00:00", generated_by="tester"))
+    prefs = PdfReader(io.BytesIO(res.pdf)).trailer["/Root"]["/ViewerPreferences"]
+    assert prefs["/PrintScaling"] == "/None"
+    for lang in ("ar", "en"):  # report strings use only characters the bundled fonts can draw
+        bad = {k for k, v in catalogue(lang).items() if k.startswith("rpt.") and set(v) & set("∩→←✓⚠")}
+        assert not bad, bad
+
+
+def test_a13_license_duplicates_use_tolerance_case_and_per_attribute_blocking():
+    from sls.licensing.reconcile import LicenseRecordInput as L
+    from sls.licensing.reconcile import reconcile
+
+    near = reconcile({"G": 300.0}, {}, [L("a", "LIC-7", 1, "verified", (("G", 180.0),)),
+                                        L("b", "lic-7 ", 1, "verified", ((" G", 180.001),))])
+    g = near.areas[0]
+    assert g.licensed == pytest.approx(180.0) and not g.conflicts         # same license, within tolerance
+    fence_only = reconcile({"G": 300.0}, {"fence": 50.0},
+                           [L("a", "L-1", 1, "verified", (("G", 100.0),), (("fence", 20.0),)),
+                            L("b", "L-1", 1, "verified", (("G", 100.0),), (("fence", 25.0),))])
+    assert not fence_only.areas[0].conflicts and fence_only.areas[0].licensed == pytest.approx(100.0)
+    assert fence_only.lengths[0].conflicts                                   # only the differing item is blocked
+    neg = reconcile({"G": 300.0}, {}, [L("a", "L-2", 1, "verified", (("G", -50.0),))])
+    assert neg.areas[0].conflicts and neg.areas[0].licensed == 0
+    two = reconcile({"G": 300.0}, {}, [L("a", "", 1, "verified", (("G", 100.0),)),
+                                       L("b", "", 1, "verified", (("G", 100.0),))])
+    assert two.areas[0].licensed == pytest.approx(200.0)                     # not merged as duplicates

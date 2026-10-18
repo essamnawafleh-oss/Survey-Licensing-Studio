@@ -52,11 +52,19 @@ def find_oda(configured: str = "") -> Path | None:
     return None
 
 
+def _runnable(p: Path) -> bool:
+    """Windows runs files by extension (PATHEXT); elsewhere the execute permission decides."""
+    if sys.platform.startswith("win"):
+        exts = os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").lower().split(";")
+        return p.suffix.lower() in exts
+    return os.access(p, os.X_OK)
+
+
 def find_libredwg(configured: str = "") -> Path | None:
     if configured:
         p = Path(configured)
         ok_name = "dwg" in p.name.lower()  # dwg2dxf / dwgread, not an arbitrary file
-        return p if p.is_file() and ok_name and (sys.platform.startswith("win") or os.access(p, os.X_OK)) else None
+        return p if p.is_file() and ok_name and _runnable(p) else None
     for name in _LIBREDWG_NAMES:
         bundled = _bundled_dir() / "libredwg" / name
         if bundled.is_file():
