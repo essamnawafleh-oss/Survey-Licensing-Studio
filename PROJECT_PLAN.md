@@ -72,7 +72,7 @@ at the end of this file.
 6. **Data integrity.** Original files are never overwritten (content-hashed copies).
    Calculations are pinned to a rule version and to license record revisions.
 
-## Feature status (2026-10-18, 117 automated tests passing, 2 DWG tests skipped)
+## Feature status (2026-10-18, 108 automated tests passing, 2 DWG tests skipped)
 
 | Area | Feature | Status | Evidence / notes |
 |------|---------|--------|------------------|
