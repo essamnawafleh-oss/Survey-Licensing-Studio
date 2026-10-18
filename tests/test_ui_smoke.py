@@ -153,3 +153,29 @@ def test_admin_and_transform_dialogs_construct(window, qtbot, sample_dxf):
         tf.table.setItem(0, c, QTableWidgetItem(v))
     tf._compute()
     assert tf.apply_btn.isEnabled() and "RMS" in tf.result.text()
+
+
+def test_register_parcel_from_find_and_pick(window, qtbot, tmp_path):
+    from test_cadastre import OX, OY, parcel_shp as _make  # noqa: F401
+    from sls.gis.shapefile_layer import inspect, suggest_mapping
+
+    shp = _make.__wrapped__(tmp_path)
+    ws = window.ws
+    ws.cadastre.import_layer(ws.user, shp, suggest_mapping(inspect(shp).fields))
+    case = ws.cases.get(window.case_id)
+    from dataclasses import replace
+
+    case.units = replace(case.units, crs_id="ESRI:102158")
+    ws.cases.save(ws.user, case)
+    target = ws.cadastre.find(key="900103000000351")[0]
+    window.use_register_parcels([target.id])
+    d = window.canvas.drawing
+    boundary = [e for e in d.entities.values() if e.layer == "PROPERTY_BOUNDARY" and e.meta.get("source") == "cadastre"]
+    assert len(boundary) == 1 and ws.drawings.parcel(window.case_id).boundary_entity_id == boundary[0].id
+    assert ws.cases.get(window.case_id).fields["plot_number"] == "00351"
+    # Pick tool answers from the register; earlier register geometry is replaced, not duplicated.
+    window.activate_tool("parcel")
+    window.canvas.tool.on_point((OX + 35, OY + 10))
+    boundary = [e for e in d.entities.values() if e.layer == "PROPERTY_BOUNDARY" and e.meta.get("source") == "cadastre"]
+    assert len(boundary) == 1 and boundary[0].meta["parcel_number"] == "00352"
+    window.undo()  # the replacement is undoable

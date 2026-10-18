@@ -38,7 +38,7 @@ def is_rtl(lang: str | None = None) -> bool:
     return (lang or _current) == "ar"
 
 
-def tr(key: str, lang: str | None = None, **kwargs: object) -> str:
+def tr(key: str, lang: str | None = None, /, **kwargs: object) -> str:
     lang = lang or _current
     text = catalogue(lang).get(key) or catalogue("en").get(key) or key
     return text.format(**kwargs) if kwargs else text

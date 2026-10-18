@@ -27,6 +27,7 @@ PERMISSIONS: dict[str, tuple[str, ...]] = {
     "generate_report": ROLES,
     "import_rules": ("reviewer", "admin"),
     "verify_rules": ("reviewer", "admin"),
+    "import_cadastre": ("reviewer", "admin"),
     "verify_units": ROLES,
     "verify_boundary": ROLES,
     "verify_license": ("reviewer", "admin"),

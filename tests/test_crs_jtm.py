@@ -7,7 +7,7 @@ import pytest
 from sls.cad.dxf_io import import_dxf
 from sls.cad.model import Drawing, Entity
 from sls.cad.ops import find_parcel
-from sls.core.crs import JTM, check_extents, describe, scale_factor, to_lonlat
+from sls.core.crs import JTM, JTM_EPSG, check_extents, describe, same_grid, scale_factor, to_lonlat
 from sls.core.units import CrsKind, DrawingUnits, LengthUnit
 from sls.services.case_service import CaseService
 
@@ -17,8 +17,10 @@ WADI_MUSA = (353857.0, 356254.0)  # JTM grid coordinates of Wadi Musa town centr
 def test_jtm_definition_comes_from_epsg():
     import pyproj
 
+    assert JTM == "ESRI:102158"  # the authority's GIS definition (.prj "Jordan_JTM") is the default
     info = describe(JTM)
-    assert info.name == "ED50 / Jordan TM" and info.kind == "projected" and info.unit == "metre"
+    assert info.name == "Jordan_JTM" and info.kind == "projected" and info.unit == "metre"
+    assert describe(JTM_EPSG).name == "ED50 / Jordan TM" and same_grid(JTM, JTM_EPSG)
     params = {p.name: p.value for p in pyproj.CRS.from_epsg(3066).coordinate_operation.params}
     assert params["Longitude of natural origin"] == 37
     assert params["Scale factor at natural origin"] == pytest.approx(0.9998)

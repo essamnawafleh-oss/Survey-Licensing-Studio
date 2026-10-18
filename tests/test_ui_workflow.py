@@ -108,7 +108,7 @@ def test_case_dialog_rejects_bad_date_and_unknown_unit_verification(qtbot, works
     cd.survey_date.setText("1/2/2026")
     cd.accept()
     cd.survey_date.setText("")
-    assert cd.unit.currentData() == "m" and cd._crs_code() == "EPSG:3066"  # JTM pre-selected, not verified
+    assert cd.unit.currentData() == "m" and cd._crs_code() == "ESRI:102158"  # JTM pre-selected, not verified
     assert not cd.units_verified.isChecked()
     cd.unit.setCurrentIndex(cd.unit.findData("unknown"))
     cd.units_verified.setChecked(True)  # with unit "unknown"

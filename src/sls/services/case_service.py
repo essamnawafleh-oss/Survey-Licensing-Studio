@@ -24,6 +24,12 @@ from ..persistence.workspace import Workspace
 from ..rules.excel_rules import LandUseRule
 from ..core.errors import SlsError
 
+CADASTRE_LAYERS = {
+    "PROPERTY_BOUNDARY": {"role": "property_boundary", "color": "#4FC3F7", "lineweight": 0.5},
+    "CADASTRE_PARCELS": {"role": "neighbor_parcel", "color": "#78909C"},
+    "CADASTRE_LABELS": {"role": "annotation", "color": "#B0BEC5"},
+}
+
 DERIVED_LAYERS = {
     "setback": "SETBACK_BOUNDARY",
     "violation": "SETBACK_VIOLATIONS",
@@ -168,6 +174,92 @@ class CaseService:
         self.ws.audit.record(self.ws.user, "transform_drawing", "drawing", drawing_id, loaded.record.case_id,
                              **{k: v for k, v in record.items() if k != "residuals"})
         return LoadedDrawing(loaded.record, rev, out)
+
+    # -- cadastral parcel register -------------------------------------------------------------
+
+    def cadastre_entities(self, case_id: str, parcel_ids: list[int], neighbours_margin: float = 30.0
+                          ) -> tuple[list[Entity], list[str], list[str]]:
+        """Entities for the chosen register parcel(s) plus surrounding parcels with their numbers.
+
+        Returns (entities, boundary entity ids, warnings). Geometry is copied unchanged; nothing
+        is verified. A single-part, valid parcel gives exactly one boundary candidate.
+        """
+        from ..core.crs import same_grid
+
+        case = self.ws.cases.get(case_id)
+        parcels = [self.ws.cadastre.get(i) for i in parcel_ids]
+        if not parcels:
+            raise ValidationError("No parcel selected.")
+        layer = self.ws.cadastre.layer(parcels[0].layer_id)
+        warnings: list[str] = []
+        if layer.crs_code and case.units.crs_id and not same_grid(layer.crs_code, case.units.crs_id):
+            raise ValidationError(f"The parcel layer is in {layer.crs_code} but the case uses {case.units.crs_id}; "
+                                  "the coordinates are not compatible. Change the case coordinate system or "
+                                  "use a layer in the same system.")
+        meta_base = {"source": "cadastre", "cadastre_layer": layer.label, "cadastre_layer_id": layer.id}
+        entities: list[Entity] = []
+        boundary_ids: list[str] = []
+        chosen_fids = {p.fid for p in parcels}
+        for p in parcels:
+            if not p.valid:
+                warnings.append(f"Register parcel {p.dls_key or p.label} has a geometry problem: {p.issue}.")
+            if p.geometry is None:
+                continue
+            polys = [p.geometry] if p.geometry.geom_type == "Polygon" else list(getattr(p.geometry, "geoms", []))
+            if len(polys) > 1:
+                warnings.append(f"Register parcel {p.dls_key or p.label} has {len(polys)} separate parts; choose the "
+                                "part to use as the property boundary before verifying.")
+            meta = {**meta_base, "dls_key": p.dls_key, "parcel_number": p.parcel_no, "village": p.village,
+                    "basin": p.basin, "sector": p.sector, "sheet": p.sheet, "globalid": p.globalid,
+                    "register_area_m2": round(p.area_m2 or 0.0, 3)}
+            for part in polys:
+                ring = [[x, y] for x, y in list(part.exterior.coords)[:-1]]
+                e = Entity("polyline", "PROPERTY_BOUNDARY", {"points": ring, "closed": True}, meta=dict(meta))
+                entities.append(e)
+                boundary_ids.append(e.id)
+                for hole in part.interiors:
+                    entities.append(Entity("polyline", "PROPERTY_BOUNDARY",
+                                           {"points": [[x, y] for x, y in list(hole.coords)[:-1]], "closed": True},
+                                           meta={**meta, "hole": True}))
+                    warnings.append(f"Register parcel {p.dls_key or p.label} contains a hole (inner ring).")
+        if neighbours_margin > 0:
+            x0, y0, x1, y1 = parcels[0].geometry.bounds if parcels[0].geometry is not None else (0, 0, 0, 0)
+            for n in self.ws.cadastre.in_window(x0 - neighbours_margin, y0 - neighbours_margin,
+                                                x1 + neighbours_margin, y1 + neighbours_margin, layer.id):
+                if n.fid in chosen_fids or n.geometry is None:
+                    continue
+                meta = {**meta_base, "dls_key": n.dls_key, "parcel_number": n.parcel_no}
+                for part in ([n.geometry] if n.geometry.geom_type == "Polygon" else list(n.geometry.geoms)):
+                    entities.append(Entity("polyline", "CADASTRE_PARCELS",
+                                           {"points": [[x, y] for x, y in list(part.exterior.coords)[:-1]],
+                                            "closed": True}, meta=dict(meta)))
+                if n.parcel_no:
+                    c = n.geometry.representative_point()
+                    entities.append(Entity("text", "CADASTRE_LABELS", {"position": [c.x, c.y], "text": n.parcel_no,
+                                                                       "height": 1.5, "rotation": 0.0},
+                                           meta=dict(meta)))
+        return entities, boundary_ids, warnings
+
+    def link_case_to_parcel(self, case_id: str, parcel_id: int, boundary_entity_id: str | None,
+                            boundary_points: list[list[float]] | None) -> None:
+        """Fill the case's administrative fields from the register and set the boundary candidate."""
+        p = self.ws.cadastre.get(parcel_id)
+        case = self.ws.cases.get(case_id)
+        known = {fd.key for fd in self.ws.cases.field_defs()}
+        updates = {"village": p.village, "basin": p.basin, "neighbourhood": p.sector, "plot_number": p.parcel_no,
+                   "sheet_no": p.sheet, "dls_key": p.dls_key}
+        case.fields.update({k: v for k, v in updates.items() if k in known and v})
+        if p.dls_key:
+            case.parcel_identifier = p.dls_key
+        self.ws.cases.save(self.ws.user, case)
+        if boundary_entity_id:
+            parcel = self.ws.drawings.parcel(case_id)
+            parcel.boundary_entity_id = boundary_entity_id
+            parcel.boundary_points = boundary_points or []
+            parcel.identifier = p.dls_key or p.label
+            parcel.edge_types = []
+            parcel.verified = False
+            self.ws.drawings.save_parcel(self.ws.user, parcel)
 
     # -- rules ---------------------------------------------------------------------------
 

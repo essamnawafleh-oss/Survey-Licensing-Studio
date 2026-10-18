@@ -676,6 +676,10 @@ class ParcelPickTool(Tool):
         d = self.drawing
         if d is None or not self.layer_ok("PROPERTY_BOUNDARY" if d.has_layer("PROPERTY_BOUNDARY") else None):
             return
+        hook = getattr(self.canvas, "cadastre_pick", None)
+        if hook is not None and hook(pt[0], pt[1]):  # the parcel register answered (attributes included)
+            self.finish()
+            return
         roles = {layer.name for layer in d.layers if layer.role in ops.PARCEL_LAYER_ROLES}
         near = self.canvas.entities_in(pt[0] - 1e-6, pt[1] - 1e-6, pt[0] + 1e-6, pt[1] + 1e-6)
         polygons = [e for e in near if e.layer in roles and e.meta.get("source") != "derived"]

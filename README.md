@@ -151,10 +151,32 @@ change is undoable.
 - Changes to cases, units, rules, boundaries, licenses, calculations and reports are written
   to the `audit_log` table.
 
+## Parcel register (GIS parcel layer)
+
+*File → Parcel register* imports the authority's parcel layer as an Esri Shapefile (`.shp`,
+`.shx`, `.dbf`, `.prj` and, if present, `.cpg`, all in one folder).
+- **Field mapping:** pre-filled for the DLS schema (`VILL_CODE`, `HOD_CODE`, `SECTOR_COD`,
+  `SHEET_NO`, `PARCEL_ID`, `DLS_KEY`, `GLOBALID`); confirm it before importing.
+- **Before importing**, a check lists every geometry problem, multi-part parcel, missing
+  key or number, and key repeated on several polygons. Nothing is repaired, merged or
+  dropped.
+- **Versions:** each import is a new version, and the source files are kept with their
+  SHA-256. The Petra district layer has 20,197 parcels and imports in about 8 seconds.
+
+**Finding a parcel:** *Case → Find parcel* searches by village → basin → neighbourhood →
+parcel number (`351` and `00351` both work), or by the DLS key. When several polygons share
+the identifiers, all of them are listed with their areas, and the user selects one.
+- *Use as property boundary* copies the polygon to `PROPERTY_BOUNDARY`, adds the
+  neighbouring parcels with their numbers, and fills the case fields (village, basin,
+  neighbourhood, parcel, sheet, DLS key). The boundary is a **candidate**: classify the edges
+  and verify it as usual.
+- The **Pick parcel** tool (`PP`) does the same with a click on the map.
+
 ## Coordinate system: Jordan TM (JTM)
 
-New cases use **EPSG:3066 "ED50 / Jordan TM"** by default, taken from the EPSG registry in
-PROJ. That is Transverse Mercator, central meridian 37°E, scale factor 0.9998, false easting
+New cases use the authority's GIS definition **"Jordan_JTM" (ESRI:102158, from the parcel
+layer's `.prj`)** by default. **EPSG:3066 "ED50 / Jordan TM"** has the same projection and
+gives identical E/N; only the datum used for latitude/longitude differs, by a few metres. That is Transverse Mercator, central meridian 37°E, scale factor 0.9998, false easting
 500 000 m, false northing −3 000 000 m, International 1924 ellipsoid. Another system can be
 chosen in *Case details*.
 - **At import:** the drawing's coordinates are checked against Jordan, the area of use of

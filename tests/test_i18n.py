@@ -42,6 +42,7 @@ def used_keys() -> set[str]:
     keys |= {f"lic_issue.{k}" for k in ("no_date", "no_quantities", "no_document", "duplicate_floor")}
     keys |= {f"lic.{k}" for k in ("attach", "open", "doc_options", "ocr")}
     keys |= {f"kind.{k}" for k in ("wall", "fence")}
+    keys |= {f"cad.field.{k}" for k in ("key", "village", "basin", "sector", "sheet", "parcel", "globalid")}
     keys |= {f"rules.st.{k}" for k in ("numeric", "conditional", "no_setbacks")}
     keys |= {f"rules.st_hint.{k}" for k in ("conditional", "no_setbacks")}
     keys |= {f"act.{a}" for a in ("new_case", "open_case", "save", "import_drawing", "new_drawing", "export_dxf",
@@ -49,7 +50,8 @@ def used_keys() -> set[str]:
                                   "erase", "select_all", "zoom_extents", "grid", "osnap", "grid_snap", "ortho",
                                   "lineweights", "case_details", "rules", "boundary", "calculate", "results",
                                   "licenses", "media", "report", "regulatory_check", "regulatory_transform",
-                                  "case_fields", "setback_override", "limitations", "about")}
+                                  "case_fields", "setback_override", "find_parcel", "cadastre_import",
+                                  "limitations", "about")}
     return keys
 
 
@@ -66,3 +68,16 @@ def test_catalogues_have_same_keys_and_placeholders():
     ph = re.compile(r"{(\w+)}")
     for k in en:
         assert set(ph.findall(en[k])) == set(ph.findall(ar[k])), k
+
+
+def test_every_message_formats_with_its_own_placeholders():
+    """Placeholders such as {key} must not collide with tr()'s own parameters."""
+    from sls.core.i18n import tr
+
+    ph = re.compile(r"{(\w+)}")
+    for lang in ("ar", "en"):
+        for k, text in catalogue(lang).items():
+            names = set(ph.findall(text))
+            if names:
+                out = tr(k, lang, **{n: "X" for n in names})
+                assert "{" not in out, (lang, k)

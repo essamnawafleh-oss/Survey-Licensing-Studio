@@ -129,3 +129,22 @@ Each decision records context, the choice, and its consequences. Add new entries
 - Very dark layer colours are lightened for display only.
 - Drawing revisions are serialised once. Integrity is checked on the stored bytes.
 - A regulatory plan is inserted only around the survey: entities whose bounds touch the survey extents plus a margin are inserted whole and unchanged.
+
+## TD-24 Parcel register from the GIS parcel layer
+- **Context:** the department's parcel layer `JTM_VW` (Shapefile, 20,197 polygons) carries the DLS identifiers village, basin, sector, sheet, parcel and `DLS_KEY`, plus a `.prj` "Jordan_JTM". That is better than the DWG regulatory plan: attributes come per polygon, nothing is lost in conversion, and the coordinate system is explicit.
+- **Choice:**
+  - Read the layer with pyshp (pure Python, MIT) and shapely.
+  - Store it in SQLite as an immutable, versioned `cadastre_layers` / `cadastre_parcels` register: WKB geometry, bounding-box columns and indexes. The source files are copied to `shared/cadastre/` with their SHA-256.
+  - The text encoding comes from `.cpg`, falling back to cp1256 (Arabic Windows).
+  - The CRS comes from `.prj` and is identified via PROJ (ESRI:102158). Layers are accepted for a case only when their grid matches the case CRS (`same_grid`: same projection, parameters, ellipsoid and unit). ESRI:102158 and EPSG:3066 therefore count as compatible.
+- **Real data findings, all kept and shown, never repaired:**
+  - 7 invalid polygons: 5 self-intersecting rings, and 2 with too few points or only holes.
+  - 839 multi-part parcels.
+  - 25 parcels without a key and 24 without a parcel number.
+  - 60 keys repeated on 174 polygons. Example: `066403000000351` has 6 polygons of 750–1,215 m².
+- **Rules:**
+  - A search returns every matching polygon, and the user selects one.
+  - A multi-part or invalid parcel gives no automatic boundary and comes with warnings.
+  - Point picking takes the smallest polygon containing the point, and lists any others.
+  - Using a parcel fills the case fields and sets an **unverified** boundary candidate. Register geometry carries `meta.source = "cadastre"`, the layer version and the GLOBALID.
+- **Default CRS:** changed to ESRI:102158, the authority's own definition.

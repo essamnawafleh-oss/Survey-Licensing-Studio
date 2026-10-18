@@ -39,6 +39,7 @@ class MainWindow(QMainWindow):
 
         self.canvas = CadCanvas()
         self.canvas.can_edit = lambda: self.case_id is not None and self.ws.user.can("edit_drawing")
+        self.canvas.cadastre_pick = self._pick_from_register
         self.setCentralWidget(self.canvas)
         self.layers = LayerPanel()
         self.layers.set_canvas(self.canvas)
@@ -115,6 +116,7 @@ class MainWindow(QMainWindow):
         m_file.addAction(self._act("act.settings", self.open_settings))
         m_file.addAction(self._act("act.users", self.manage_users))
         m_file.addAction(self._act("act.case_fields", self.manage_fields))
+        m_file.addAction(self._act("act.cadastre_import", self.import_cadastre))
         m_file.addSeparator()
         m_file.addAction(self._act("act.exit", self.close, "Ctrl+Q"))
 
@@ -143,6 +145,7 @@ class MainWindow(QMainWindow):
                           ("act.boundary", self.open_boundary), ("act.setback_override", self.open_override),
                           ("act.calculate", self.calculate), ("act.results", self.show_results), ("act.licenses", self.open_licenses),
                           ("act.media", self.open_media), ("act.report", self.open_report),
+                          ("act.find_parcel", self.find_parcel),
                           ("act.regulatory_check", self.regulatory_check),
                           ("act.regulatory_transform", self.regulatory_transform)):
             m_case.addAction(self._act(key, slot, needs_case=key != "act.rules"))
@@ -182,10 +185,10 @@ class MainWindow(QMainWindow):
         self.addToolBarBreak()
         tb_lic = QToolBar(tr("tb.licensing"))
         tb_lic.setObjectName("tb_licensing")
-        for key, slot in (("act.case_details", self.edit_case), ("act.rules", self.open_rules),
-                          ("act.boundary", self.open_boundary), ("act.calculate", self.calculate),
-                          ("act.licenses", self.open_licenses), ("act.media", self.open_media),
-                          ("act.report", self.open_report)):
+        for key, slot in (("act.case_details", self.edit_case), ("act.find_parcel", self.find_parcel),
+                          ("act.rules", self.open_rules), ("act.boundary", self.open_boundary),
+                          ("act.calculate", self.calculate), ("act.licenses", self.open_licenses),
+                          ("act.media", self.open_media), ("act.report", self.open_report)):
             tb_lic.addAction(self._find_or_make(key, slot))
         self.addToolBar(tb_lic)
         self._enable_case_actions()
@@ -757,6 +760,83 @@ class MainWindow(QMainWindow):
         from .dialogs.admin_dialogs import UsersDialog
 
         UsersDialog(self.ws.users, self).exec()
+
+    # ------------------------------------------------------------------ parcel register
+
+    def import_cadastre(self) -> None:
+        from .dialogs.cadastre_dialogs import CadastreImportDialog
+
+        CadastreImportDialog(self.ws, self.run_busy, self).exec()
+
+    def find_parcel(self) -> None:
+        if self.ws.cadastre.active_layer() is None:
+            QMessageBox.information(self, tr("act.find_parcel"), tr("cad.none"))
+            return
+        from .dialogs.cadastre_dialogs import FindParcelDialog
+
+        dlg = FindParcelDialog(self.ws, self)
+        if dlg.exec() and dlg.selected_ids:
+            self.use_register_parcels(dlg.selected_ids)
+
+    def _pick_from_register(self, x: float, y: float) -> bool:
+        """Pick-parcel tool hook: use the register when it has a parcel at the point."""
+        if self.ws.cadastre.active_layer() is None or self.case_id is None:
+            return False
+        hits = self.ws.cadastre.at_point(x, y)
+        if not hits:
+            return False
+        if len(hits) > 1:
+            self.cmd.message(tr("cad.overlap", keys=", ".join(h.dls_key or h.label for h in hits[1:])), "warn")
+        self.use_register_parcels([hits[0].id])  # smallest polygon containing the point
+        return True
+
+    def use_register_parcels(self, parcel_ids: list[int]) -> None:
+        if self.canvas.drawing is None:
+            self._set_loaded(self.service.new_blank_drawing(self.case_id))
+        try:
+            entities, boundary_ids, warnings = self.service.cadastre_entities(self.case_id, parcel_ids)
+        except Exception as exc:  # noqa: BLE001
+            show_error(self, exc)
+            return
+        from ..cad.commands import AddEntities
+        from ..services.case_service import CADASTRE_LAYERS
+
+        d = self.canvas.drawing
+        for name, props in CADASTRE_LAYERS.items():
+            d.ensure_layer(name, **props)
+        # Replace earlier register geometry so the drawing never holds two candidate boundaries.
+        old = [e.id for e in d.entities.values() if e.meta.get("source") == "cadastre"]
+        if old:
+            from ..cad.commands import DeleteEntities
+
+            self.stack.push(DeleteEntities(old, "replace register parcels"))
+        self.stack.push(AddEntities(entities, "register parcel"))
+        self.canvas.edited()
+        self.layers.refresh()
+        main = next(e for e in entities if e.id in boundary_ids) if boundary_ids else None
+        single = main if len(boundary_ids) == 1 else None
+        self.save_drawing()
+        try:
+            self.service.link_case_to_parcel(self.case_id, parcel_ids[0], single.id if single else None,
+                                             [[p[0], p[1]] for p in single.data["points"]] if single else None)
+        except Exception as exc:  # noqa: BLE001
+            show_error(self, exc)
+            return
+        if main is not None:
+            self.canvas.selection = {main.id}
+            xs = [p[0] for p in main.vertices()]
+            ys = [p[1] for p in main.vertices()]
+            self.canvas.cx, self.canvas.cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+            span = max(max(xs) - min(xs), max(ys) - min(ys), 1.0) * 3
+            self.canvas.scale = min(self.canvas.width(), self.canvas.height()) / span
+            self.canvas.selectionChanged.emit()
+            self.canvas.update()
+        p = self.ws.cadastre.get(parcel_ids[0])
+        self.cmd.message(tr("cad.used", key=p.dls_key or p.label, area=f"{p.area_m2 or 0:,.2f}"), "ok")
+        for w in warnings:
+            self.cmd.message(w, "warn")
+        self._update_title()
+        self._refresh_case_summary()
 
     def manage_fields(self) -> None:
         try:

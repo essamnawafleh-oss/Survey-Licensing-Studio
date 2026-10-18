@@ -1,9 +1,10 @@
 """Coordinate reference systems via the PROJ database (pyproj, fully offline).
 
-The default system for this department is EPSG:3066 "ED50 / Jordan TM" (JTM):
-Transverse Mercator, central meridian 37°E, scale factor 0.9998, false easting 500 000 m,
-false northing −3 000 000 m, International 1924 ellipsoid. Parameters are read from the
-EPSG registry shipped with PROJ, never typed in by hand.
+The default system for this department is Jordan TM (JTM) as defined in the authority's GIS
+(.prj "Jordan_JTM" = ESRI:102158): Transverse Mercator, central meridian 37°E, scale factor
+0.9998, false easting 500 000 m, false northing −3 000 000 m, International 1924 ellipsoid.
+EPSG:3066 has the same projection, so grid coordinates are identical; only the datum used
+for latitude/longitude differs. Parameters come from the PROJ database, never typed by hand.
 
 Survey and licensing calculations use planar *grid* coordinates. Geographic coordinates are
 only displayed for orientation; the datum transformation to WGS 84 has an accuracy of metres
@@ -15,11 +16,14 @@ import math
 from dataclasses import dataclass
 from functools import lru_cache
 
-JTM = "EPSG:3066"
+JTM_ESRI = "ESRI:102158"  # "Jordan_JTM" as exported by the authority's ArcGIS (.prj), datum D_Jordan
+JTM_EPSG = "EPSG:3066"    # "ED50 / Jordan TM": identical projection and grid, different datum label
+JTM = JTM_ESRI
 
 # Presets offered in the UI. Codes must exist in the PROJ database.
 PRESETS: tuple[tuple[str, str], ...] = (
-    (JTM, "ED50 / Jordan TM (JTM)"),
+    (JTM_ESRI, "Jordan_JTM (JTM — GIS definition)"),
+    (JTM_EPSG, "ED50 / Jordan TM (JTM)"),
     ("EPSG:32636", "WGS 84 / UTM zone 36N"),
     ("EPSG:32637", "WGS 84 / UTM zone 37N"),
 )
@@ -91,6 +95,43 @@ def scale_factor(code: str, x: float, y: float) -> float | None:
     proj = pyproj.Proj(crs)
     f = proj.get_factors(lon, lat)
     return float(f.meridional_scale) if math.isfinite(f.meridional_scale) else None
+
+
+def from_wkt(wkt: str) -> str:
+    """Identify a .prj WKT as an authority code (e.g. 'ESRI:102158'), or return the WKT itself."""
+    pyproj = _pyproj()
+    try:
+        crs = pyproj.CRS.from_wkt(wkt)
+    except pyproj.exceptions.CRSError as exc:
+        raise CrsUnavailable(f"Unreadable coordinate system definition: {exc}") from exc
+    auth = crs.to_authority(min_confidence=90)
+    return f"{auth[0]}:{auth[1]}" if auth else crs.to_wkt()
+
+
+@lru_cache(maxsize=64)
+def same_grid(a: str, b: str) -> bool:
+    """True when two systems give identical planar coordinates (same projection, parameters,
+    ellipsoid and unit), even if their datum names differ (e.g. ESRI:102158 vs EPSG:3066)."""
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    pyproj = _pyproj()
+    try:
+        ca, cb = pyproj.CRS.from_user_input(a), pyproj.CRS.from_user_input(b)
+    except pyproj.exceptions.CRSError:
+        return False
+    if not (ca.is_projected and cb.is_projected):
+        return False
+    oa, ob = ca.coordinate_operation, cb.coordinate_operation
+    if oa.method_name != ob.method_name:
+        return False
+    pa = {p.name: round(p.value, 9) for p in oa.params}
+    pb = {p.name: round(p.value, 9) for p in ob.params}
+    ea, eb = ca.ellipsoid, cb.ellipsoid
+    return (pa == pb and abs(ea.semi_major_metre - eb.semi_major_metre) < 1e-6
+            and abs(ea.inverse_flattening - eb.inverse_flattening) < 1e-9
+            and ca.axis_info[0].unit_conversion_factor == cb.axis_info[0].unit_conversion_factor)
 
 
 @dataclass(frozen=True)

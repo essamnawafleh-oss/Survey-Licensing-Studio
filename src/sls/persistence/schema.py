@@ -312,6 +312,58 @@ CREATE TABLE case_setback_overrides (
 CREATE INDEX ix_overrides_case ON case_setback_overrides(case_id);
 """,
     ),
+    (
+        3,
+        "cadastral parcel register (GIS parcel layers)",
+        """
+-- One row per imported parcel layer version. Source files are kept in the store under
+-- shared/cadastre/; source_json lists their names, stored paths and SHA-256.
+CREATE TABLE cadastre_layers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    crs_code TEXT NOT NULL DEFAULT '',
+    crs_wkt TEXT NOT NULL DEFAULT '',
+    encoding TEXT NOT NULL,
+    mapping_json TEXT NOT NULL,
+    source_json TEXT NOT NULL,
+    summary_json TEXT NOT NULL,
+    record_count INTEGER NOT NULL,
+    imported_at TEXT NOT NULL,
+    imported_by TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    UNIQUE (name, version)
+);
+
+CREATE TABLE cadastre_parcels (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    layer_id TEXT NOT NULL REFERENCES cadastre_layers(id) ON DELETE CASCADE,
+    fid INTEGER NOT NULL,
+    dls_key TEXT NOT NULL DEFAULT '',
+    village TEXT NOT NULL DEFAULT '',
+    basin TEXT NOT NULL DEFAULT '',
+    sector TEXT NOT NULL DEFAULT '',
+    sheet TEXT NOT NULL DEFAULT '',
+    parcel_no TEXT NOT NULL DEFAULT '',
+    globalid TEXT NOT NULL DEFAULT '',
+    attrs_json TEXT NOT NULL,
+    wkb BLOB,
+    area_m2 REAL,
+    parts INTEGER NOT NULL DEFAULT 0,
+    minx REAL, miny REAL, maxx REAL, maxy REAL,
+    valid INTEGER NOT NULL,
+    issue TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX ix_cad_key ON cadastre_parcels(layer_id, dls_key);
+CREATE INDEX ix_cad_admin ON cadastre_parcels(layer_id, village, basin, sector, parcel_no);
+CREATE INDEX ix_cad_bbox ON cadastre_parcels(layer_id, minx, maxx, miny, maxy);
+
+INSERT OR IGNORE INTO case_field_defs(key,label_ar,label_en,field_type,sort_order)
+    VALUES ('sheet_no','رقم اللوحة','Sheet number','text',9);
+INSERT OR IGNORE INTO case_field_defs(key,label_ar,label_en,field_type,sort_order)
+    VALUES ('dls_key','المفتاح الموحد (دائرة الأراضي)','DLS parcel key','text',10);
+""",
+    ),
 ]
 
 # Default configurable case fields, inserted once by migration seeding (editable later).

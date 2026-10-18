@@ -65,7 +65,8 @@ class CadCanvas(QWidget):
         self._drag_now: QPointF | None = None
         self.tool = None  # set by set_tool
         self.highlight_ids: set[str] = set()
-        self.annotations: list[tuple[float, float, str]] = []  # transient labels (e.g. parcel edge numbers)
+        self.annotations: list[tuple[float, float, str]] = []
+        self.cadastre_pick = None  # optional callable(x, y) -> bool, set by the main window  # transient labels (e.g. parcel edge numbers)
         self.can_edit: Callable[[], bool] = lambda: True
 
     # -- document ----------------------------------------------------------------------

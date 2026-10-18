@@ -89,6 +89,7 @@ class Workspace:
 
     def _extend(self) -> None:
         """Attach repositories defined in other modules (kept separate to limit file size)."""
+        from .cadastre_repo import CadastreRepository
         from .calculations_repo import CalculationRepository
         from .drawings_repo import DrawingRepository
         from .licenses_repo import LicenseRepository
@@ -102,6 +103,7 @@ class Workspace:
         self.media = MediaRepository(self)
         self.calculations = CalculationRepository(self)
         self.reports = ReportRepository(self)
+        self.cadastre = CadastreRepository(self)
 
     @property
     def db_path(self) -> Path:
